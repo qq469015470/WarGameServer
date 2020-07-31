@@ -1,3 +1,5 @@
+#include "UserService.h"
+
 #include "web.h"
 
 #include <stdlib.h>
@@ -11,6 +13,10 @@ web::HttpResponse HomePage(const web::UrlParam& _params)
 
 web::HttpResponse Register(const web::UrlParam& _params)
 {
+	UserService userService;
+
+	userService.Register(_params["username"].ToString(), _params["password"].ToString());
+
 	return web::Json("ok");
 }
 
