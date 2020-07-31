@@ -1,0 +1,52 @@
+<html>
+	<meta charset="UTF-8">
+	<head>
+		<title>war space测试页</title>
+	<head>
+	<body>
+		<div>
+			<button onclick='RegisterRandom()'>随机注册</button>
+		</div>
+	<body>
+
+	<script src="jquery-3.5.1.min.js"></script>
+	<script language="javascript">
+		function RandomNum(_start, _end) {
+			return _start + Math.floor(Math.random() *_end - _start);
+		}
+
+		function RandomCoding(){
+ 			var arr = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z','a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z','1','2','3','4','5','6','7','8','9','0'];
+
+			return arr[RandomNum(0,  arr.length - 1)];
+ 		}
+
+		function Register(_username, _password) {
+			$.ajax({
+				url: '/Register',
+				type: 'POST',
+				data: {username: _username, password: _password},
+				success: function (_data) {
+					console.log(_data);
+				}
+			});	
+		}
+
+		function RegisterRandom() {
+			var userRange = RandomNum(0, 8); 
+			var passRange = RandomNum(0, 8);
+
+			var username = '';
+			var password = '';
+
+			for(var i = 1; i <= userRange; i++) {
+				username += RandomCoding();
+			}	
+			for(var i = 1; i <= passRange; i++) {
+				password += RandomCoding();
+			}
+
+			Register(username, password);
+		}
+	</script>
+</html>
