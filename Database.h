@@ -67,7 +67,7 @@ public:
 		
 };
 
-class Queryier
+class Querier
 {
 private:
 	mongocxx::collection collection;
@@ -91,13 +91,13 @@ private:
 	}
 	
 public:
-	Queryier(mongocxx::collection _collection):
+	Querier(mongocxx::collection _collection):
 		collection(std::move(_collection))
 	{
 
 	}
 
-	Queryier Equal(std::string _key, std::string _value)
+	Querier Equal(std::string _key, std::string _value)
 	{
 		this->documents.push(_key);
 		this->documents.push(_value);
@@ -129,13 +129,13 @@ public:
 
 	}
 
-	Queryier Query(std::string_view _tableName)
+	Querier Query(std::string_view _tableName)
 	{
 		mongocxx::pool::entry client = this->pool.acquire();
 		mongocxx::database db = (*client)[this->dbname.c_str()];
 		mongocxx::collection col = db[_tableName.data()];
 
-		return Queryier(std::move(col));
+		return Querier(std::move(col));
 	}	
 
 	Entity Add(std::string_view _tableName)
