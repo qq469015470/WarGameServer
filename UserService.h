@@ -20,11 +20,13 @@ public:
 
 	}
 
-	User Register(std::string_view _name, std::string_view _password)
+	User Register(std::string _name, std::string _password)
 	{
-		User user{_name.data(), _password.data()};
+		User user{std::move(_name), std::move(_password)};
 
-		this->database.Add(this->tableName);
+		this->database.Add(this->tableName)
+				.Update("name", user.name)
+				.Update("password", user.password);
 
 		return user;
 	}
