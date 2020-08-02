@@ -17,6 +17,8 @@ web::HttpResponse Register(const web::UrlParam& _params)
 
 	userService.Register(_params["username"].ToString(), _params["password"].ToString());
 
+	userService.Login(_params["username"].ToString(), _params["password"].ToString());
+
 	return web::Json("ok");
 }
 

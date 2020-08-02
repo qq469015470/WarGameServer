@@ -21,14 +21,18 @@
 #include <mongocxx/uri.hpp>
 #include <mongocxx/instance.hpp>
 #include <mongocxx/options/update.hpp>
+//#include <bsoncxx/builder/stream/document.hpp>
 
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <queue>
 
 using bsoncxx::builder::basic::kvp;
 using bsoncxx::builder::basic::make_array;
 using bsoncxx::builder::basic::make_document;
+//using bsoncxx::builder::stream::document;
+//using bsoncxx::builder::stream::finalize;
 
 class Entity
 {
@@ -63,6 +67,55 @@ public:
 		
 };
 
+class Queryier
+{
+private:
+	mongocxx::collection collection;
+	std::queue<std::string> documents;	
+
+	bsoncxx::document::value BuildDocument()
+	{
+		bsoncxx::builder::basic::document builder{};	
+		while(!this->documents.empty())
+		{
+			const auto key = this->documents.front();
+			this->documents.pop();
+			const auto value = this->documents.front();
+			this->documents.pop();
+		                                                    
+			builder.append(kvp(key, value));
+		}
+
+
+		return builder.extract();
+	}
+	
+public:
+	Queryier(mongocxx::collection _collection):
+		collection(std::move(_collection))
+	{
+
+	}
+
+	Queryier Equal(std::string _key, std::string _value)
+	{
+		this->documents.push(_key);
+		this->documents.push(_value);
+		
+		return *this;
+	}
+
+	mongocxx::cursor Find()
+	{
+		return this->collection.find(this->BuildDocument());
+	}
+
+	bsoncxx::stdx::optional<bsoncxx::document::value> FindOne()
+	{
+		return this->collection.find_one(this->BuildDocument());
+	}	
+};
+
 class Database
 {
 private:
@@ -74,6 +127,15 @@ public:
 	Database()
 	{
 
+	}
+
+	Queryier Query(std::string_view _tableName)
+	{
+		mongocxx::pool::entry client = this->pool.acquire();
+		mongocxx::database db = (*client)[this->dbname.c_str()];
+		mongocxx::collection col = db[_tableName.data()];
+
+		return Queryier(std::move(col));
 	}	
 
 	Entity Add(std::string_view _tableName)
