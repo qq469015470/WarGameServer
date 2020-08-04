@@ -17,7 +17,7 @@ private:
 	
 public:
 	UserService():
-		table(*db::Database().GetTable("UserInfo"))
+		table(*db::Database().Query().Equal("name", "UserInfo").FindOne())
 	{
 
 	}

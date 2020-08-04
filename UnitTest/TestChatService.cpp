@@ -11,10 +11,12 @@ TEST(TestChatService, SendVaildMessage)
 	auto user = userService.GetUser(userCookie);
 
 	EXPECT_NO_THROW(chatService.SendMessage("5f29092ac5a7f99f37afc548", user->name, "hello!"));
+	EXPECT_THROW(chatService.SendMessage("none", user->name, "hello!"), std::logic_error);
 
 	db::Database db;
 
-	EXPECT_TRUE(db.GetTable("Chat5f29092ac5a7f99f37afc548")
+	EXPECT_TRUE(db.Query().Equal("name", "Chat5f29092ac5a7f99f37afc548")
+			.FindOne()
 			->Query()
 			.Equal("name", "testB")
 			.Equal("message", "hello!")

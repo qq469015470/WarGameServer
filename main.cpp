@@ -1,4 +1,5 @@
 #include "UserService.h"
+#include "ChatService.h"
 
 #include "web.h"
 
@@ -24,6 +25,8 @@ web::HttpResponse Register(const web::UrlParam& _params)
 
 int main(int _argc, char** _args)
 {
+	db::Database().UseDb("wargameServer");
+
 	if(_argc != 3)
 	{
 		std::cout << "args must be two. args[1] is ip args[2] is port." << std::endl;

@@ -77,14 +77,14 @@ namespace db
 			
 	};
 	
-	class Querier
+	class EntityQuerier
 	{
 	private:
 		mongocxx::collection collection;
 		bsoncxx::builder::basic::document builder;
 	
 		template<typename T>
-		Querier& VaildEqual(std::string _key, const T& _value)
+		EntityQuerier& VaildEqual(std::string _key, const T& _value)
 		{
 			this->builder.append(kvp(_key, _value));
 	
@@ -92,7 +92,7 @@ namespace db
 		}
 	
 	public:
-		Querier(mongocxx::collection _collection):
+		EntityQuerier(mongocxx::collection _collection):
 			collection(std::move(_collection))
 		{
 	
@@ -100,28 +100,28 @@ namespace db
 	
 		
 		template<typename T>
-		Querier& Equal(std::string _key, const T& _value)
+		EntityQuerier& Equal(std::string _key, const T& _value)
 		{
 			static_assert(sizeof(T) == -1, "value type not exists");
 			return *this;
 		}
 	
-		Querier& Equal(std::string _key, const char* _value)
+		EntityQuerier& Equal(std::string _key, const char* _value)
 		{
 			return this->VaildEqual(_key, bsoncxx::types::b_utf8(_value));
 		}
 	
-		Querier& Equal(std::string _key, const std::string& _value)
+		EntityQuerier& Equal(std::string _key, const std::string& _value)
 		{
 			return this->VaildEqual(_key, bsoncxx::types::b_utf8(_value));
 		}
 	
-		Querier& Equal(std::string _key, const bsoncxx::types::b_utf8& _value)
+		EntityQuerier& Equal(std::string _key, const bsoncxx::types::b_utf8& _value)
 		{
 			return this->VaildEqual(_key, _value);
 		}
 	
-		Querier& Equal(std::string _key, const bsoncxx::oid& _value)
+		EntityQuerier& Equal(std::string _key, const bsoncxx::oid& _value)
 		{
 			return this->VaildEqual(_key, _value);
 		}
@@ -164,9 +164,9 @@ namespace db
 	
 		}
 	
-		Querier Query()
+		EntityQuerier Query()
 		{
-			return Querier(this->collection);
+			return EntityQuerier(this->collection);
 		}
 	
 	
@@ -188,7 +188,71 @@ namespace db
 			}
 		}
 	};
-	
+
+	class TableQuerier
+	{
+	private:
+		mongocxx::database db;
+		bsoncxx::builder::basic::document builder;
+
+		template<typename T>
+		TableQuerier& VaildEqual(std::string _key, const T& _value)
+		{
+			this->builder.append(kvp(_key, _value));
+		                                                             
+			return *this;
+		}
+
+	public:
+		TableQuerier(mongocxx::database _db):
+			db(_db)
+		{
+
+		}
+
+		template<typename T>
+		TableQuerier& Equal(std::string _key, const T& _value)
+		{
+			static_assert(sizeof(T) == -1, "value type not exists");
+			return *this;
+		}
+		                                                                                                                     
+		TableQuerier& Equal(std::string _key, const char* _value)
+		{
+			return this->VaildEqual(_key, bsoncxx::types::b_utf8(_value));
+		}
+		                                                                                                                     
+		TableQuerier& Equal(std::string _key, const std::string& _value)
+		{
+			return this->VaildEqual(_key, bsoncxx::types::b_utf8(_value));
+		}
+		                                                                                                                     
+		TableQuerier& Equal(std::string _key, const bsoncxx::types::b_utf8& _value)
+		{
+			return this->VaildEqual(_key, _value);
+		}
+		                                                                                                                     
+		TableQuerier& Equal(std::string _key, const bsoncxx::oid& _value)
+		{
+			return this->VaildEqual(_key, _value);
+		}
+		                                                                                                                     
+		std::optional<Table> FindOne()
+		{
+			auto cursor = this->db.list_collections(this->builder.extract());
+
+			std::optional<Table> result;
+		                                                                                                                     
+			if(cursor.begin() == cursor.end())
+				return {};
+		                                                 
+			mongocxx::collection col(this->db[(*cursor.begin())["name"].get_utf8().value.to_string()]);
+			result = Table(col);
+		                                                                                                                     
+			return result;
+		}	
+	};
+
 	class Database
 	{
 	private:
@@ -207,18 +271,13 @@ namespace db
 			this->dbname = _dbname;
 			return *this;
 		}
-	
-		std::optional<Table> GetTable(std::string_view _tableName)
+
+		TableQuerier Query()
 		{
 			mongocxx::pool::entry client = this->pool.acquire();
 			mongocxx::database db = (*client)[this->dbname.c_str()];
-	
-			if(!db.has_collection(_tableName.data()))
-				return {};
-	
-			mongocxx::collection col = db[_tableName.data()];
-	
-			return Table(col);
+
+			return TableQuerier(std::move(db));	
 		}
 
 		Table CreateTable(std::string_view _tableName)
