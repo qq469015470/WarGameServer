@@ -80,6 +80,7 @@ namespace db
 	class EntityQuerier
 	{
 	private:
+		mongocxx::pool::entry entry;
 		mongocxx::collection collection;
 		bsoncxx::builder::basic::document builder;
 	
@@ -92,8 +93,9 @@ namespace db
 		}
 	
 	public:
-		EntityQuerier(mongocxx::collection _collection):
-			collection(std::move(_collection))
+		EntityQuerier(mongocxx::pool* _pool, std::string _dbname, std::string _colname):
+			entry(_pool->acquire()),
+			collection((*this->entry)[_dbname][_colname])
 		{
 	
 		}
@@ -155,18 +157,26 @@ namespace db
 	class Table
 	{
 	private:
+		mongocxx::pool* pool;
+		mongocxx::pool::entry entry;
+		std::string dbname;
+		std::string colname;
 		mongocxx::collection collection;
 	
 	public:
-		Table(mongocxx::collection _collection):
-			collection(_collection)
+		Table(mongocxx::pool* _pool, std::string _dbname, std::string _colname):
+			pool(_pool),
+			entry(_pool->acquire()),
+			dbname(_dbname),
+			colname(_colname),
+			collection((*this->entry)[_dbname][_colname])
 		{
 	
 		}
 	
 		EntityQuerier Query()
 		{
-			return EntityQuerier(this->collection);
+			return EntityQuerier(this->pool, this->dbname, this->colname);
 		}
 	
 	
@@ -192,7 +202,9 @@ namespace db
 	class TableQuerier
 	{
 	private:
-		mongocxx::database db;
+		mongocxx::pool* pool;
+		mongocxx::pool::entry entry;
+		std::string dbname;
 		bsoncxx::builder::basic::document builder;
 
 		template<typename T>
@@ -204,8 +216,10 @@ namespace db
 		}
 
 	public:
-		TableQuerier(mongocxx::database _db):
-			db(_db)
+		TableQuerier(mongocxx::pool* _pool, std::string _dbname):
+			pool(_pool),
+			entry(this->pool->acquire()),
+			dbname(_dbname)
 		{
 
 		}
@@ -239,15 +253,17 @@ namespace db
 		                                                                                                                     
 		std::optional<Table> FindOne()
 		{
-			auto cursor = this->db.list_collections(this->builder.extract());
+			mongocxx::database db((*this->entry)[this->dbname]);
+
+			auto cursor = db.list_collections(this->builder.extract());
 
 			std::optional<Table> result;
 		                                                                                                                     
 			if(cursor.begin() == cursor.end())
 				return {};
 		                                                 
-			mongocxx::collection col(this->db[(*cursor.begin())["name"].get_utf8().value.to_string()]);
-			result = Table(col);
+			std::string colname((*cursor.begin())["name"].get_utf8().value.to_string());
+			result = std::move(Table(this->pool, this->dbname, colname));
 		                                                                                                                     
 			return result;
 		}	
@@ -259,9 +275,14 @@ namespace db
 		static mongocxx::instance instance;
 		static mongocxx::pool pool;
 		static std::string dbname;
+
+		mongocxx::pool::entry entry;
+		mongocxx::client* client;
 	
 	public:
-		Database()
+		Database():
+			entry(this->pool.acquire()),
+			client(&*this->entry)
 		{
 	
 		}
@@ -274,21 +295,19 @@ namespace db
 
 		TableQuerier Query()
 		{
-			mongocxx::pool::entry client = this->pool.acquire();
-			mongocxx::database db = (*client)[this->dbname.c_str()];
+			mongocxx::database db = (*this->client)[this->dbname];
 
-			return TableQuerier(std::move(db));	
+			return TableQuerier(&this->pool, this->dbname);	
 		}
 
 		Table CreateTable(std::string_view _tableName)
 		{
-			mongocxx::pool::entry client = this->pool.acquire();
-			mongocxx::database db = (*client)[this->dbname.c_str()];
+			mongocxx::database db = (*this->client)[this->dbname.c_str()];
 
 			if(db.has_collection(_tableName.data()))
 				throw std::logic_error("table had create");
 
-			return Table(db.create_collection(_tableName.data()));
+			return Table(&this->pool, this->dbname, _tableName.data());
 		}
 	};
 	mongocxx::instance Database::instance = {};

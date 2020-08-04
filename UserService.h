@@ -14,12 +14,11 @@ class UserService
 {
 private:
 	db::Table table;
-	
+
 public:
 	UserService():
-		table(*db::Database().Query().Equal("name", "UserInfo").FindOne())
+		table(std::move(*db::Database().Query().Equal("name", "UserInfo").FindOne()))
 	{
-
 	}
 
 	User Register(std::string _name, std::string _password)
