@@ -1,3 +1,5 @@
+#pragma one
+
 #include "Database.h"
 
 #include <string>
@@ -11,27 +13,40 @@ struct User
 class UserService
 {
 private:
-	Database database;
-	static const std::string tableName;
+	db::Table table;
 	
 public:
-	UserService()
+	UserService():
+		table(*db::Database().GetTable("UserInfo"))
 	{
 
 	}
 
 	User Register(std::string _name, std::string _password)
 	{
+		if(_name.size() == 0 || _name.size() > 20)
+			throw std::logic_error("username must be 0 - 20 length");
+		if(_password.size() == 0 || _password.size() > 20)
+			throw std::logic_error("password must be 0 - 20 length");
+
+		auto result = this->table.Query()
+					.Equal("name", bsoncxx::types::b_utf8(_name))
+					.FindOne();
+
+		if(result)
+			throw std::logic_error("username had registered");
+
+
 		User user{std::move(_name), std::move(_password)};
 
-		this->database.Add(this->tableName)
-				.Update("name", user.name)
-				.Update("password", user.password);
+		this->table.Add()
+			.Update("name", user.name)
+			.Update("password", user.password);
 
 		return user;
 	}
 
-	User Login(std::string _name, std::string _password)	
+	std::optional<std::string> Login(std::string _name, std::string _password)	
 	{
 		//auto cursor = this->database.Query(this->tableName)
 		//				.Equal("name", _name)
@@ -45,20 +60,28 @@ public:
 		//      std::cout << doc["name"].get_utf8().value.to_string() << std::endl;
 		//}
 
-		auto result = this->database.Query(this->tableName)
-		  				.Equal("name", _name)
-		  				.Equal("password", _password)
-						.FindOne();
+		auto result = this->table.Query()
+		  			.Equal("name", _name)
+		  			.Equal("password", _password)
+					.FindOne();
 
-		User user
-		{
-			result->view()["name"].get_utf8().value.to_string(),
-			result->view()["password"].get_utf8().value.to_string()
-		};
+		if(!result)
+			return {};
 
-		std:: cout << "user:" << user.name << " password:" << user.password << std::endl;
+		result->Update("token", bsoncxx::oid());	
 
-		return user;
+		return result->GetView()["token"].get_oid().value.to_string();
+	}
+
+	std::optional<User> GetUser(std::string _token)
+	{
+		auto result = this->table.Query()
+					.Equal("token", bsoncxx::oid(_token))
+					.FindOne();
+
+		if(!result)
+			return {};
+
+		return User{result->GetView()["name"].get_utf8().value.to_string(), result->GetView()["password"].get_utf8().value.to_string()};
 	}
 };
-const std::string UserService::tableName = "UserInfo";
