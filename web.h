@@ -163,6 +163,133 @@ namespace web
 
 	};
 
+	class HttpHeader
+	{
+	private:
+		int contentLength;
+		std::string connection;
+		std::string upgrade;
+		std::string secWebSocketKey;
+		std::unordered_map<std::string, std::string> cookies;
+
+		static inline std::string GetAttrValue(std::unordered_map<std::string, HttpAttr> _attrs, std::string_view _key)
+		{
+			auto iter = _attrs.find(_key.data());
+			if(iter == _attrs.end())
+			{
+				return "";
+			}
+			else
+			{
+				return iter->second.GetValue();
+			}
+		}
+
+		static std::unordered_map<std::string, HttpAttr> ReadAttr(std::string_view _content)
+		{
+			std::unordered_map<std::string, HttpAttr> attrs;
+			std::string::size_type left(0);
+			std::string::size_type right(_content.find("\r\n"));
+			while(right != std::string::npos)
+			{
+				std::string_view temp(_content.substr(left, right - left));
+
+				std::string::size_type pos = temp.find(":");
+				if(pos == std::string::npos)
+				{
+					break;
+				}
+
+				std::string key(temp.substr(0, pos));
+				std::string value(temp.substr(pos + 2, temp.size() - pos - 1));
+				
+				attrs.insert(std::pair<std::string, HttpAttr>(std::move(key), HttpAttr(key, std::move(value))));
+
+				left = right + 2;
+				right = _content.find("\r\n", left);
+			}
+
+			return attrs;
+		}
+
+		void ReadCookie(std::string_view _cookie)
+		{
+			std::string::size_type leftPos(0);
+			std::string::size_type rightPos(_cookie.find(";"));
+			                                                                
+			while(_cookie.size() > 0)
+			{
+				std::string::size_type pos(_cookie.find("=", leftPos));
+				std::string key(_cookie.substr(leftPos, pos - leftPos));
+				pos++;
+				std::string value(_cookie.substr(pos, rightPos - pos));
+				
+				this->cookies.insert(std::pair<std::string, std::string>(std::move(key), std::move(value)));				
+			                                                                
+				leftPos = rightPos;
+				rightPos = _cookie.find(";", leftPos);
+				if(rightPos == std::string::npos)
+					break;
+			}
+		}
+
+	public:
+		HttpHeader(std::string_view _headerStr):
+			contentLength(0)
+		{
+			std::unordered_map<std::string, HttpAttr> attrs = this->ReadAttr(_headerStr);
+
+			const std::string temp = this->GetAttrValue(attrs, "Content-Length");
+			if(!temp.empty())
+				this->contentLength = std::stoi(temp);
+
+			this->connection = this->GetAttrValue(attrs, "Connection");
+			this->upgrade = this->GetAttrValue(attrs, "Upgrade");
+			this->secWebSocketKey = this->GetAttrValue(attrs, "Sec-WebSocket-Key");
+
+			this->ReadCookie(this->GetAttrValue(attrs, "Cookie"));
+		}
+
+		//HttpHeader(const HttpHeader& _header):
+		//	contentLength(_header.contentLength),
+		//	connection(_header.connection),
+		//	upgrade(_header.upgrade),
+		//	secWebSocketKey(_header.secWebSocketKey),
+		//	cookies(_header.cookies)
+		//{
+
+		//}
+
+		int GetContentLength() const	
+		{
+			return this->contentLength;
+		}
+
+		const char* GetConnection() const
+		{
+			return this->connection.c_str();
+		}
+		
+		const char* GetUpgrade() const
+		{
+			return this->upgrade.c_str();
+		}
+
+		const char* GetSecWebSocketKey() const
+		{
+			return this->secWebSocketKey.c_str();
+		}
+
+		const char* GetCookie(std::string_view _key) const
+		{
+			auto iter = this->cookies.find(_key.data());
+			if(iter == this->cookies.end())
+				return "";
+			else
+				return iter->second.c_str(); 
+		}
+	};
+
 	struct WebsocketData
 	{
 		bool fin;
@@ -182,7 +309,7 @@ namespace web
 		std::string type;
 		std::string url;
 		std::string version;
-		std::unordered_map<std::string, HttpAttr> attrs;
+		std::optional<HttpHeader> header;
 		std::vector<char> body;
 
 		inline std::string::size_type ReadBasic(std::string_view _header)
@@ -233,30 +360,6 @@ namespace web
 			return right + 2;
 		}
 
-		void ReadAttr(std::string_view _content)
-		{
-			std::string::size_type left(0);
-			std::string::size_type right(_content.find("\r\n"));
-			while(right != std::string::npos)
-			{
-				std::string_view temp(_content.substr(left, right - left));
-				
-				std::string::size_type pos = temp.find(":");
-				if(pos == std::string::npos)
-				{
-					continue;
-				}
-
-				std::string key(temp.substr(0, pos));
-				std::string value(temp.substr(pos + 2, temp.size() - pos - 1));
-				
-				this->attrs.insert(std::pair<std::string, HttpAttr>(std::move(key), HttpAttr(key, std::move(value))));
-
-				left = right + 2;
-				right = _content.find("\r\n", left);
-			}
-		}
-
 		inline void ReadBody(const char* _buffer, size_t _size)
 		{
 			this->body.resize(_size);
@@ -272,20 +375,16 @@ namespace web
 			{
 				throw std::runtime_error("http request not vaild!");
 			}
-			
-			const std::string header(_buffers, pos);
 
-			std::string::size_type left(this->ReadBasic(header));
-			std::string::size_type right(header.size() - left - 1);
-			this->ReadAttr(header.substr(left, right));
+			const std::string headerStr(_buffers, pos + 4);
 
-			auto iter = this->attrs.find("Content-Length");
-			if(iter != this->attrs.end())
-			{
-				size_t bodyLen = std::stoi(iter->second.GetValue());
+			const std::string::size_type headerStart = this->ReadBasic(headerStr);
 
-				this->ReadBody(pos + 4, bodyLen);
-			}
+			this->header = HttpHeader(headerStr.substr(headerStart));	
+
+			size_t bodyLen = this->header->GetContentLength(); 
+
+			this->ReadBody(pos + 4, bodyLen);
 		}
 
 		const std::string& GetType() const
@@ -298,20 +397,6 @@ namespace web
 			return this->url;
 		}
 
-		const std::string& GetAttrValue(std::string_view _key)
-		{
-			auto iter = this->attrs.find(_key.data());
-			if(iter == this->attrs.end())
-			{
-				this->attrs.insert(std::pair<std::string, HttpAttr>(_key.data(), HttpAttr(_key.data(), "")));
-				return this->attrs.at(_key.data()).GetValue();
-			}
-			else
-			{
-				return iter->second.GetValue();
-			}
-		}
-
 		const char* GetBody() const
 		{
 			return this->body.data();
@@ -320,6 +405,11 @@ namespace web
 		size_t GetBodyLen() const
 		{
 			return this->body.size();
+		}
+
+		const HttpHeader& GetHeader() const
+		{
+			return *this->header;
 		}
 	};
 
@@ -357,8 +447,7 @@ namespace web
 			
 			header = "HTTP/1.1 " + std::to_string(_stateCode) + " " + HttpResponse::GetSpec(_stateCode) + "\r\n";
 
-			if(_bodyLen > 0)
-				header += "Content-Length: " + std::to_string(_bodyLen) + "\r\n";
+			header += "Content-Length: " + std::to_string(_bodyLen) + "\r\n";
 
 			for(const auto& item: _httpAttrs)
 			{
@@ -460,7 +549,7 @@ namespace web
 	class Router
 	{
 	private:
-		using UrlCallback = HttpResponse(const UrlParam&);
+		using UrlCallback = HttpResponse(const UrlParam&, const HttpHeader&);
 		using WebsocketConnectCallback = void(Websocket* _id);
 		using WebsocketOnMessageCallback = void(Websocket* _id, const char* _data, size_t _size);
 		using WebsocketDisconnectCallback = void(Websocket* _id);
@@ -470,7 +559,7 @@ namespace web
 		public:
 			virtual ~IUrlCallbackObj() = default;
 
-			virtual HttpResponse Callback(const UrlParam& _params) = 0;
+			virtual HttpResponse Callback(const UrlParam& _params, const HttpHeader&) = 0;
 		};
 
 		template<typename _TYPE, typename _METHOD>
@@ -488,9 +577,9 @@ namespace web
 		                                                                        
 			}
 			
-			virtual HttpResponse Callback(const UrlParam& _params) override
+			virtual HttpResponse Callback(const UrlParam& _params, const HttpHeader& _header) override
 			{
-				return ((this->ptr)->*(this->func))(_params);
+				return ((this->ptr)->*(this->func))(_params, _header);
 			}
 		};
 
@@ -682,18 +771,18 @@ namespace web
 			return false;
 		}
 
-		HttpResponse RunCallback(std::string_view _type, std::string_view _url, const UrlParam& _params)
+		HttpResponse RunCallback(std::string_view _type, std::string_view _url, const UrlParam& _params, const HttpHeader& _header)
 		{
 			auto urlInfo = this->GetUrlInfo(_type, _url);
 			if(urlInfo != nullptr)
 			{
-				return (urlInfo->callback)(_params);			
+				return (urlInfo->callback)(_params, _header);
 			}
 
 			auto urlCallbackObj = this->GetUrlCallbackObj(_type.data(), _url.data());
 			if(urlCallbackObj != nullptr)
 			{
-				return urlCallbackObj->Callback(_params);
+				return urlCallbackObj->Callback(_params, _header);
 			}
 
 			throw std::runtime_error("callback not found");
@@ -914,7 +1003,6 @@ namespace web
 					//finish = true;
 					//ERR_print_errors_fp(stderr);
 				}
-				std::cout << buffer << std::endl;
 
 				contentLen += recvLen;
 
@@ -1233,10 +1321,10 @@ namespace web
 								HttpRequest request = HttpServer::GetHttpRequest(sslMap.at(events[i].data.fd).get());
 
 								//检测是否是websocket
-								if(request.GetAttrValue("Upgrade") == "websocket"
+								if(std::string(request.GetHeader().GetUpgrade()) == "websocket"
 									&& _httpServer->router->FindWebsocketCallback(request.GetUrl()))
 								{	
-									const std::string secWebsocketKey = request.GetAttrValue("Sec-WebSocket-Key");
+									const std::string secWebsocketKey = request.GetHeader().GetSecWebSocketKey();
 									const std::string secWebsocketAccept = HttpServer::GetWebsocketCode(secWebsocketKey);
 
 									const std::vector<HttpAttr> httpAttrs =
@@ -1264,18 +1352,34 @@ namespace web
 									{
 										const UrlParam params(HttpServer::JsonToUrlParam(request.GetBody(), request.GetBodyLen()));
 
-										HttpResponse response = _httpServer->router->RunCallback(request.GetType(), request.GetUrl(), params);
+										HttpResponse response = _httpServer->router->RunCallback(request.GetType(), request.GetUrl(), params, request.GetHeader());
 										HttpServer::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
 									}
 									else if(request.GetType() == "GET")
 									{
-										const std::vector<char> body = HttpServer::GetRootFile(request.GetUrl());
-										HttpResponse response(200, {}, body.data(), body.size());
-										                             
-										HttpServer::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
+										try
+										{
+											const std::vector<char> body = HttpServer::GetRootFile(request.GetUrl());
+
+											HttpResponse response(200, {}, body.data(), body.size());
+											                             
+											HttpServer::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
+										}
+										catch(std::runtime_error _ex)
+										{
+											HttpResponse response(404, {}, nullptr, 0);
+											                             
+											HttpServer::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
+										}
+									}
+									else
+									{
+										HttpResponse response(404, {}, nullptr, 0);
+                                                        			                             
+                                                        			HttpServer::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
 									}
 									
-									if(request.GetAttrValue("Connection") != "keep-alive")
+									if(request.GetHeader().GetConnection() != "keep-alive")
 									{
 										HttpServer::CloseSocket(epfd, sslMap.at(events[i].data.fd).get(), &events[i]);
 										sslMap.erase(events[i].data.fd);

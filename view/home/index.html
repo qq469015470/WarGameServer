@@ -13,7 +13,7 @@
 				<label>密码：</label><input id="password" type="password" />
 			</div>
 			<div>
-				<button>登录</button>
+				<button onClick="Login(document.getElementById('user').value, document.getElementById('password').value)">登录</button>
 				<button onclick="Register(document.getElementById('user').value, document.getElementById('password').value)">注册</button>
 				<!--<button onclick='RegisterRandom()'>随机注册</button>-->
 			</div>
@@ -31,6 +31,21 @@
 
 			return arr[RandomNum(0,  arr.length - 1)];
  		}
+
+		function Login(_username, _password) {
+			$.ajax({
+				url: '/Login',
+				type: 'POST',
+				data: {username: _username, password: _password},
+				success: function (_data) {
+					console.log(_data);
+					if(_data != '') {
+						document.cookie = 'token=' + _data + ';';
+						window.location = '/';
+					}
+				}
+			});
+		}
 
 		function Register(_username, _password) {
 			$.ajax({
