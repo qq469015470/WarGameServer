@@ -1,0 +1,150 @@
+<html>
+	<head>
+		<meta charset="utf-8">
+		<title>
+			聊天室
+		</title>
+
+		<style type="text/css">
+			.container {
+				width: 100%;
+				height: 100%;
+				padding-top: 50px;
+				box-sizing: border-box;
+			}
+
+			.status {
+				position: absolute;
+				top: 0;
+				left: 0;
+				right: 0;
+				bottom: 0;
+				width: 100%;
+				height: 50px;
+				background: gray;
+			}
+
+			.status-connect {
+				background: rgb(100, 200, 100);
+			}
+
+			.status-disconnect {
+				background: red;
+			}
+
+			.status > span {
+				display: block;
+				color:white;
+				font-weight: 700;
+				text-align: center;
+				line-height: 50px;
+			}
+
+			.message-input {
+				border: 1px black solid;
+				height: 20%;
+			}
+
+			.message-box {
+				border: 1px black solid;
+				height: 80%;
+				white-space: pre-line;
+				overflow-y: scroll;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="container">
+			<div id="status" class="status"><span></span></div>
+			<div id="content" class="message-box"></div>
+			<div class="message-input">
+				<textarea id="send" 
+					  style="width:100%;height:100%;resize:none;border: 0"></textarea>
+			</div>
+		</div>
+	</body>
+
+	<script src="./jquery-3.5.1.min.js"></script>
+	<script>
+		var ws;
+
+		function SetUpChat() {
+			ws = new WebSocket('wss://' + window.location.host + '/chat');
+			var status = $('#status');
+			                                                                   
+			ws.onopen = function(evt) {
+				status.removeClass('status-disconnect');
+				status.addClass('status-connect');
+				status.children('span').html('已连接');
+			};
+
+			ws.onmessage = function(evt) {
+				var msg = evt.data;
+				if(msg == 'token failure')
+					window.location.href = '/';
+
+				var strarr = [];
+
+				do{
+					var pos = msg.indexOf(' ');
+					if(pos == -1)
+						pos = msg.length;
+
+					strarr.push(msg.substr(0, pos));
+					pos += 1;
+					msg = msg.substr(pos);
+					
+				} while(msg.length > 0);
+
+				if(strarr[0] != 'msg')
+					return;
+
+				var content = $('#content');
+				var flag = false;
+				
+				if(Math.abs(content.scrollTop() + content.height() - content[0].scrollHeight) < 1)
+					flag = true;	
+
+				content.text(content.text() + strarr[1] + ':' + strarr[2] + '\r\n');
+			
+				if(flag)
+					content.scrollTop(content[0].scrollHeight);
+			}
+			                                                                   
+			ws.onclose = function(evt) {
+				status.removeClass('status-connect');
+				status.addClass('status-disconnect');
+				status.children('span').html('断开');
+			                                                                   
+				setTimeout(function () {
+					SetUpChat();		                                                                   
+				}, 2000);
+			}
+
+		}
+
+		function SendMessage(_text) {
+			if(ws.readyState == ws.CLOSED)
+				return false;
+
+			ws.send(_text);
+
+			return true;
+		}
+
+		window.onload = function() {
+			$('#send').keydown(function (_event) {
+				if(_event.ctrlKey == true && _event.key == "Enter") {
+					document.getElementById('send').value += '\n';
+				}
+				else if(_event.key == "Enter") {
+					//_event.returnValue = false;
+					_event.preventDefault();
+					if(SendMessage(this.value))
+						this.value = '';
+				}
+			});
+			SetUpChat();
+		}	
+	</script>
+</html>
