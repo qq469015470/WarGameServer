@@ -9,6 +9,11 @@ private:
 	static const std::string tableName; 
 
 public:
+	inline std::string GetWorldSession()
+	{
+		return "World";
+	}
+
 	//添加会话
 	std::string AddSession()
 	{

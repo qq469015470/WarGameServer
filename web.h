@@ -550,7 +550,7 @@ namespace web
 	{
 	private:
 		using UrlCallback = HttpResponse(const UrlParam&, const HttpHeader&);
-		using WebsocketConnectCallback = void(Websocket* _id);
+		using WebsocketConnectCallback = void(Websocket* _id, const HttpHeader& header);
 		using WebsocketOnMessageCallback = void(Websocket* _id, const char* _data, size_t _size);
 		using WebsocketDisconnectCallback = void(Websocket* _id);
 
@@ -588,7 +588,7 @@ namespace web
 		public:
 			virtual ~IWebsocketeCallbackObj() = default;
 
-			virtual void ConnectCallback(Websocket* _websocket) = 0;
+			virtual void ConnectCallback(Websocket* _websocket, const HttpHeader& _header) = 0;
 			virtual void OnMessageCallback(Websocket* _websocket, const char* _data, size_t _len) = 0;
 			virtual void DisconnectCallback(Websocket* _websocket) = 0;
 		};
@@ -617,9 +617,9 @@ namespace web
 
 			}	
 
-			virtual void ConnectCallback(Websocket* _websocket) override
+			virtual void ConnectCallback(Websocket* _websocket, const HttpHeader& _header) override
 			{
-				((this->connPtr)->*this->connFunc)(_websocket);
+				((this->connPtr)->*this->connFunc)(_websocket, _header);
 			}
 
 			virtual void OnMessageCallback(Websocket* _websocket, const char* _data, size_t _len)
@@ -744,7 +744,7 @@ namespace web
 		}
 
 		template<typename _CONNTYPE, typename _MSGTYPE, typename _DISCONNTYPE>
-		void RegisterWebsocket(std::string_view _url, void(_CONNTYPE::*_connect)(Websocket*), void(_MSGTYPE::*_onMessage)(Websocket*, const char*, size_t), void(_DISCONNTYPE::*_disconnect)(Websocket*), _CONNTYPE* const _connPtr, _MSGTYPE* const _msgPtr, _DISCONNTYPE* const _disConnPtr)
+		void RegisterWebsocket(std::string_view _url, void(_CONNTYPE::*_connect)(Websocket*, const HttpHeader&), void(_MSGTYPE::*_onMessage)(Websocket*, const char*, size_t), void(_DISCONNTYPE::*_disconnect)(Websocket*), _CONNTYPE* const _connPtr, _MSGTYPE* const _msgPtr, _DISCONNTYPE* const _disConnPtr)
 		{
 			if(this->GetWebsocketInfo(_url) != nullptr
 			|| this->GetWebsocketObj(_url) != nullptr)
@@ -755,7 +755,7 @@ namespace web
 		}
 
 		template<typename _TYPE>
-                void RegisterWebsocket(std::string_view _url, void(_TYPE::*_connect)(Websocket*), void(_TYPE::*_onMessage)(Websocket*, const char*, size_t), void(_TYPE::*_disconnect)(Websocket*), _TYPE* const _ptr)
+                void RegisterWebsocket(std::string_view _url, void(_TYPE::*_connect)(Websocket*, const HttpHeader&), void(_TYPE::*_onMessage)(Websocket*, const char*, size_t), void(_TYPE::*_disconnect)(Websocket*), _TYPE* const _ptr)
                 {
 			this->RegisterWebsocket(_url, _connect, _onMessage, _disconnect, _ptr, _ptr, _ptr);
                 }
@@ -797,18 +797,18 @@ namespace web
 				return false;
 		}
 
-		void RunWebsocketConnectCallback(std::string_view _url, Websocket* const _websocket) 
+		void RunWebsocketConnectCallback(std::string_view _url, Websocket* const _websocket, const HttpHeader& _header) 
 		{
 			auto info = this->GetWebsocketInfo(_url);
                 	if(info != nullptr)
                 	{
-                		return info->connectCallback(_websocket);
+                		return info->connectCallback(_websocket, _header);
                 	}
                 	                                                                   
                 	auto objInfo = this->GetWebsocketObj(_url);
                 	if(objInfo != nullptr)
                 	{
-                		return objInfo->ConnectCallback(_websocket);
+                		return objInfo->ConnectCallback(_websocket, _header);
                 	}
 
 			throw std::logic_error("websocket url not exists");
@@ -1344,7 +1344,7 @@ namespace web
 									std::unique_ptr<Websocket> temp(new Websocket(sslMap.at(events[i].data.fd).get()));
 
 									websocketMap.insert(std::pair<int, std::unique_ptr<Websocket>>(static_cast<int>(events[i].data.fd), std::move(temp)));
-									_httpServer->router->RunWebsocketConnectCallback(request.GetUrl(), websocketMap.at(events[i].data.fd).get());
+									_httpServer->router->RunWebsocketConnectCallback(request.GetUrl(), websocketMap.at(events[i].data.fd).get(), request.GetHeader());
 								}
 								else
 								{

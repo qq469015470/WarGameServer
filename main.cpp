@@ -25,44 +25,85 @@ web::HttpResponse HomePage(const web::UrlParam& _params, const web::HttpHeader& 
 
 web::HttpResponse Login(const web::UrlParam& _params, const web::HttpHeader& _header)
 {
-	UserService userService;
+	try
+	{
 
-	auto token = userService.Login(_params["username"].ToString(), _params["password"].ToString());
-		
-		if(token.has_value())
-		return web::Json(*token);
-	else
-		return web::Json("");
+		UserService userService;
+
+
+		auto token = userService.Login(_params["username"].ToString(), _params["password"].ToString());
+			
+			if(token.has_value())
+			return web::Json(*token);
+		else
+			return web::Json("");
+	}
+	catch(std::logic_error _ex)
+	{
+		return web::Json(_ex.what());
+	}
 }
 
 web::HttpResponse Register(const web::UrlParam& _params, const web::HttpHeader& _header)
 {
+	try
+	{
+		UserService userService;
+
+		userService.Register(_params["username"].ToString(), _params["password"].ToString());
+
+		return web::Json("ok");
+	}
+	catch(std::logic_error _ex)
+	{
+		return web::Json(_ex.what());
+	}
+}
+
+class Chat
+{
+private:
+	std::unordered_map<web::Websocket*, std::string> tokenMap;
+	ChatService chatService;
 	UserService userService;
 
-	userService.Register(_params["username"].ToString(), _params["password"].ToString());
+public:
+	void ChatConnect(web::Websocket* _websocket,const web::HttpHeader& _header)
+	{
+		this->tokenMap.insert(std::pair<web::Websocket*, std::string>(_websocket, _header.GetCookie("token")));
+	}
+	
+	void ChatMessage(web::Websocket* _websocket, const char* _data, size_t _len)
+	{
+		if(_len == 0)
+			return;
 
-	return web::Json("ok");
-}
+		auto user = this->userService.GetUser(this->tokenMap.at(_websocket));
 
-void ChatConnect(web::Websocket* _websocket)
-{
-	std::cout << "chat connect" << std::endl;
-	_websocket->SendText("hello client");
-}
+		if(!user.has_value())
+		{
+			_websocket->SendText("token failure");
+			return;
+		}
 
-void ChatMessage(web::Websocket* _websocket, const char* _data, size_t _len)
-{
-
-}
-
-void ChatDisconnect(web::Websocket* _websocket)
-{
-	std::cout << "chat disconnect" << std::endl;
-}
+		this->chatService.SendMessage(this->chatService.GetWorldSession(), user->name, std::string(_data, _len));
+		for(auto& item: this->tokenMap)
+		{
+			item.first->SendText(std::string("msg ") + user->name + " " + std::string(_data, _len));
+		}
+	}
+	
+	void ChatDisconnect(web::Websocket* _websocket)
+	{
+		this->tokenMap.erase(_websocket);
+		std::cout << "chat disconnect" << std::endl;
+	}
+};
 
 int main(int _argc, char** _args)
 {
 	db::Database().UseDb("WarGameServer");
+	Chat chat;
 
 	if(_argc != 3)
 	{
@@ -74,7 +115,7 @@ int main(int _argc, char** _args)
 	router->RegisterUrl("GET", "/", &HomePage);
 	router->RegisterUrl("POST", "/Register", &Register);
 	router->RegisterUrl("POST", "/Login", &Login);
-	router->RegisterWebsocket("/chat", &ChatConnect, &ChatMessage, &ChatDisconnect); 
+	router->RegisterWebsocket("/chat", &Chat::ChatConnect, &Chat::ChatMessage, &Chat::ChatDisconnect, &chat); 
 
 	web::HttpServer server(std::move(router));
 	server.Listen(_args[1], std::atoi(_args[2]));
