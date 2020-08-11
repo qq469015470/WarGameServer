@@ -27,9 +27,7 @@ web::HttpResponse Login(const web::UrlParam& _params, const web::HttpHeader& _he
 {
 	try
 	{
-
 		UserService userService;
-
 
 		auto token = userService.Login(_params["username"].ToString(), _params["password"].ToString());
 			
@@ -71,6 +69,11 @@ public:
 	void ChatConnect(web::Websocket* _websocket,const web::HttpHeader& _header)
 	{
 		this->tokenMap.insert(std::pair<web::Websocket*, std::string>(_websocket, _header.GetCookie("token")));
+
+		for(const auto& item: this->chatService.GetMessageHistory(this->chatService.GetWorldSession(), 10))
+		{
+			_websocket->SendText(std::string("msg ") + item.date + " " + item.name + " " + item.message);
+		}
 	}
 	
 	void ChatMessage(web::Websocket* _websocket, const char* _data, size_t _len)
@@ -86,10 +89,10 @@ public:
 			return;
 		}
 
-		this->chatService.SendMessage(this->chatService.GetWorldSession(), user->name, std::string(_data, _len));
+		auto result = this->chatService.SendMessage(this->chatService.GetWorldSession(), user->name, std::string(_data, _len));
 		for(auto& item: this->tokenMap)
 		{
-			item.first->SendText(std::string("msg ") + user->name + " " + std::string(_data, _len));
+			item.first->SendText(std::string("msg ") + result.date + " " + result.name + " " + result.message);
 		}
 	}
 	

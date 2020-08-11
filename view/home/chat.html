@@ -105,7 +105,14 @@
 				if(Math.abs(content.scrollTop() + content.height() - content[0].scrollHeight) < 1)
 					flag = true;	
 
-				content.text(content.text() + strarr[1] + ':' + strarr[2] + '\r\n');
+				var text = '';
+				for(var i = 4; i < strarr.length; i++) {
+					if( i > 4 && i < strarr.length - 1)
+						text += ' ';
+					text += strarr[i];
+				}
+
+				content.text(content.text() + strarr[3] + '\t-\t' + strarr[1] + ' ' + strarr[2] + '\r\n' + text  + '\r\n\r\n');
 			
 				if(flag)
 					content.scrollTop(content[0].scrollHeight);

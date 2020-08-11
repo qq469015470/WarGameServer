@@ -479,44 +479,63 @@ namespace web
 		SSL* ssl;
 
 		//将数据变为websocket协议格式
+		//若超出uint64范围，则需要大数类及注意websocekt数据帧
 		std::vector<char> PackMessage(const char* _data, size_t _len, bool _isbuffer)
 		{
-			std::vector<char> temp;
+			std::vector<char> bytes;
 
 			if(_isbuffer)
 			{
-				temp.push_back(130);
+				bytes.push_back(130);
 			}
 			else
 			{
-				temp.push_back(129);
+				bytes.push_back(129);
 			}
 
-			//断言仅用一个数据帧就可以发送完数据
-			assert(_len < 127 + std::numeric_limits<uint64_t>::max());
+			size_t size(0);
 			
-			if(_len > 126 + std::numeric_limits<uint8_t>::max())
+			if(_len > std::numeric_limits<uint16_t>::max())
 			{
-				temp.push_back(127);
-				uint64_t len(_len - 127);
+				std::cout << "7bit + 64bit" << std::endl;
 
-				temp.insert(temp.end(), reinterpret_cast<char*>(&len), reinterpret_cast<char*>(&len) + sizeof(len));
+				bytes.push_back(127);
+				uint64_t len;
+
+				size = len;
+
+				//将本机字节序转换到网络字节序
+				len = htons(size);
+
+				bytes.insert(bytes.end(), reinterpret_cast<char*>(&len), reinterpret_cast<char*>(&len) + sizeof(len));
 			}
 			else if(_len >= 126)
 			{
-				temp.push_back(126);
-				uint8_t len(_len - 126);
+				std::cout << "7bit + 16bit" << std::endl;
+
+				bytes.push_back(126);
+				uint16_t len;
+
+				size = _len;
+
+				//将本机字节序转换到网络字节序
+				len = htons(size);
                                                                                                                                      
-                                temp.insert(temp.end(), reinterpret_cast<char*>(&len), reinterpret_cast<char*>(&len) + sizeof(len));
+                                bytes.insert(bytes.end(), reinterpret_cast<char*>(&len), reinterpret_cast<char*>(&len) + sizeof(len));
 			}
 			else
 			{
-				temp.push_back(_len);
+				std::cout << "7bit" << std::endl;
+				bytes.push_back(_len);
+				size = _len;
 			}
 
-			temp.insert(temp.end(), _data, _data + _len);
+			bytes.insert(bytes.end(), _data, _data + size);
 
-			return temp;
+			_len -= size;
+			assert(_len == 0);
+
+			return bytes;
 		}
 
 	public:
@@ -939,26 +958,42 @@ namespace web
 
 			if(length == 126)
 			{
-				length = *reinterpret_cast<unsigned int*>(&buffer[2]);
-				readOffset += 2;
+				length = ntohs(*reinterpret_cast<uint16_t*>(&buffer[2]));
+				readOffset += sizeof(uint16_t);
 			}
 			else if(length == 127)
 			{
-				length = *reinterpret_cast<unsigned long long*>(&buffer[4]);
-				readOffset += 4;
+				length = *reinterpret_cast<uint64_t*>(&buffer[2]);
+				readOffset += sizeof(uint64_t);
 			}
-
-			info.payload.resize(length);
-			memset(info.payload.data(), 0, info.payload.size());
 
 			if(info.mask == true)
 			{
 				std::copy(buffer + readOffset, buffer + readOffset + 4, info.maskingKey);
 				readOffset += 4;
+			}
+
+			//payload已读的长度
+			const size_t payloadLen = recvLen - readOffset;
+
+			info.payload.resize(length);
+			memset(info.payload.data(), 0, info.payload.size());
+
+			std::copy(buffer + readOffset, buffer + readOffset + payloadLen, info.payload.data());
+
+			assert(payloadLen <= length);
+			if(payloadLen < length)
+			{
+				SSL_read(_ssl, info.payload.data() + payloadLen, length - payloadLen);
+			}
+
+			if(info.mask == true)
+			{
 				for(int i = 0; i < length; i++)
 				{
 					const int j = i % 4;
-					info.payload[i] = buffer[readOffset + i] ^ info.maskingKey[j];
+					//info.payload[i] = buffer[readOffset + i] ^ info.maskingKey[j];
+					info.payload[i] = info.payload[i] ^ info.maskingKey[j];
 				}
 			}
 			else

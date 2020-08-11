@@ -83,6 +83,7 @@ namespace db
 		mongocxx::pool::entry entry;
 		mongocxx::collection collection;
 		bsoncxx::builder::basic::document builder;
+		mongocxx::options::find options;
 	
 		template<typename T>
 		EntityQuerier& VaildEqual(std::string _key, const T& _value)
@@ -127,21 +128,42 @@ namespace db
 		{
 			return this->VaildEqual(_key, _value);
 		}
+
+		EntityQuerier& LessThan(std::string _key, const bsoncxx::types::b_date& _value)
+		{
+			this->builder.append(kvp(_key, make_document(kvp("$lt", _value))));
+
+			return *this;
+		}
+
+		EntityQuerier& Limit(uint64_t _limit)
+		{
+			this->options.limit(_limit);
+
+			return *this;
+		}
+
+		EntityQuerier& Sort(std::string _key, int _value)
+		{
+			this->options.sort(make_document(kvp(_key, _value)));
+
+			return *this;
+		}
 	
-		//std::vector<Entity> Find()
-		//{
-		//	mongocxx::cursor cursor = this->collection.find(this->BuildDocument());
-		//	std::vector<Entity> result;
-		//	for(auto pos: cursor)
-		//	{
-		//		result.push_back(Entity(this->collection, *pos));
-		//	}
-		//	return result;
-		//}
+		std::vector<Entity> Find()
+		{
+			mongocxx::cursor cursor = this->collection.find(this->builder.extract(), this->options);
+			std::vector<Entity> result;
+			for(auto pos: cursor)
+			{
+				result.push_back(Entity(this->collection, bsoncxx::document::value(pos)));
+			}
+			return result;
+		}
 	
 		std::optional<Entity> FindOne()
 		{
-			bsoncxx::stdx::optional<bsoncxx::document::value> value(this->collection.find_one(this->builder.extract()));
+			bsoncxx::stdx::optional<bsoncxx::document::value> value(this->collection.find_one(this->builder.extract(), this->options));
 		
 			std::optional<Entity> result;
 	
