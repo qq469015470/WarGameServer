@@ -935,7 +935,8 @@ namespace web
 			{
 				if(recvLen == -1)
 				{
-					SSL_shutdown(_ssl);
+					//SSL_read发生io错误时似乎不应该调用shutdown?
+					//SSL_shutdown(_ssl);
 				}
 
 				std::string temp("websocket recv but return ");
@@ -1006,21 +1007,62 @@ namespace web
 
 		static HttpRequest GetHttpRequest(SSL* _ssl)
 		{
-			bool finish(false);
-			int contentLen(0);
+			int bodyAccLen(0);
+			int bodyReqLen(0);
 			std::vector<char> content;
 
+			std::string_view view;
+			std::string::size_type left;
+			std::string::size_type right;
+
+			//首次读取数据分析header
+			char buffer[1024];
 			do
 			{
-
-				char buffer[1024];
-
-				memset(buffer, 0, sizeof(buffer));
-
-				const int recvLen =  SSL_read(_ssl, buffer, sizeof(buffer));
-
-				//const int recvLen = recv(_sockfd, buffer, sizeof(buffer)  1, 0);
+				const int recvLen = SSL_read(_ssl, buffer, sizeof(buffer));
+				if(recvLen <= 0)
+				{
+					//recv超时
+					if(recvLen == -1)
+					{
+						//SSL_read发生io错误时似乎不应该调用shutdown?
+						//SSL_shutdown(_ssl);
+					}
+				                                                
+					std::string temp("recv but return ");
+				                                                
+					temp += std::to_string(recvLen);
+				                                                
+					throw std::runtime_error(temp.c_str());
+					//finish = true;
+					//ERR_print_errors_fp(stderr);
+				}
 				
+				content.insert(content.end(), buffer, buffer + recvLen);
+				view = std::string_view(content.data(), content.size());
+
+				left = view.find("\r\n\r\n");
+			}while(left == std::string::npos);
+
+			bodyAccLen = content.size() - (left + 4);
+			
+			left = view.find("Content-Length: ");
+			if(left != std::string::npos)
+			{
+				left += 16; 
+				right = view.find("\r\n", left);
+				if(right != std::string::npos)
+				{
+					bodyReqLen = std::stoi(view.substr(left, right).data());
+				}
+			}
+			
+
+			//接收body
+			while(bodyAccLen < bodyReqLen)
+			{
+				const int recvLen =  SSL_read(_ssl, buffer, sizeof(buffer));
+				//const int recvLen = recv(_sockfd, buffer, sizeof(buffer)  1, 0);
 
 				if(recvLen <= 0)
 				{
@@ -1039,18 +1081,9 @@ namespace web
 					//ERR_print_errors_fp(stderr);
 				}
 
-				contentLen += recvLen;
-
-				//请求头部接收完毕
 				content.insert(content.end(), buffer, buffer + recvLen);
-
-				if(strstr(content.data(), "\r\n\r\n") != nullptr)
-				{
-					finish = true;
-				}
-
+				bodyAccLen += recvLen;
 			}
-			while(!finish);
 
 			return HttpRequest(content.data());
 		}
@@ -1395,13 +1428,19 @@ namespace web
 										try
 										{
 											const std::vector<char> body = HttpServer::GetRootFile(request.GetUrl());
+											std::vector<HttpAttr> attrs = 
+											{
+												{"Cache-Control", "no-store"}
+											};
 
-											HttpResponse response(200, {}, body.data(), body.size());
+											HttpResponse response(200, std::move(attrs), body.data(), body.size());
 											                             
 											HttpServer::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
 										}
 										catch(std::runtime_error _ex)
 										{
+											std::cout << _ex.what() << std::endl;
+
 											HttpResponse response(404, {}, nullptr, 0);
 											                             
 											HttpServer::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));

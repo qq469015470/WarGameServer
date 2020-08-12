@@ -9,18 +9,25 @@
 
 web::HttpResponse HomePage(const web::UrlParam& _params, const web::HttpHeader& _header)
 {
-	UserService userService;
-	const char* token = _header.GetCookie("token");
+	try
+	{
+		UserService userService;
+		const char* token = _header.GetCookie("token");
 
-	if(token == "")
+		if(token == "")
+			return web::View("home/index.html");
+
+		std::optional<User> user(userService.GetUser(token));
+
+		if(user.has_value())
+			return web::View("home/chat.html");
+		else
+			return web::View("home/index.html");
+	}
+	catch(...)
+	{
 		return web::View("home/index.html");
-
-	std::optional<User> user(userService.GetUser(token));
-
-	if(user.has_value())
-		return web::View("home/chat.html");
-	else
-		return web::View("home/index.html");
+	}
 }
 
 web::HttpResponse Login(const web::UrlParam& _params, const web::HttpHeader& _header)
@@ -38,7 +45,8 @@ web::HttpResponse Login(const web::UrlParam& _params, const web::HttpHeader& _he
 	}
 	catch(std::logic_error _ex)
 	{
-		return web::Json(_ex.what());
+		std::cout << _ex.what() << std::endl;
+		return web::Json("");
 	}
 }
 
