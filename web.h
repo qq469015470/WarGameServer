@@ -1243,7 +1243,7 @@ namespace web
 		
 			if(epfd == -1)
 			{
-				std::cout << "create epoll faile!" << std::endl;
+				std::cout << "create epoll failed!" << std::endl;
 				return;
 			}
 
