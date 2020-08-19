@@ -473,6 +473,138 @@ namespace web
 		}
 	};
 
+	class ISocket
+	{
+	public:
+		virtual ~ISocket() = default;
+
+		virtual int Bind(const sockaddr* _addr, socklen_t _addrlen) = 0;
+		virtual int Listen(int _backlog) = 0;
+		virtual int Accept(sockaddr* _addr, socklen_t* _addrlen) = 0;
+		virtual int Read(void* _buffer, size_t _len) = 0;
+		virtual int Write(const void* _buffe, size_t _len) = 0;
+		virtual int Get() const = 0;
+	};
+
+	class Socket: virtual public ISocket
+	{
+	private:
+		int sockfd;
+
+	public:
+		Socket(int _domain, int _type, int _protocol):
+			sockfd(-1)
+		{
+			this->sockfd = socket(_domain, _type, _protocol);
+			if(this->sockfd == -1)
+			{
+				throw std::runtime_error("create sock failed");
+			}
+		}
+
+		Socket(int _sockfd):
+			sockfd(_sockfd)
+		{
+
+		}
+
+		~Socket()
+		{
+			close(this->sockfd);
+		}
+
+		virtual int Bind(const sockaddr* _addr, socklen_t _addrlen) override
+		{
+			return bind(this->sockfd, _addr, _addrlen);
+		}
+
+		virtual int Listen(int _backlog) override
+		{
+			return listen(this->sockfd, _backlog);
+		}
+
+		virtual int Accept(sockaddr* _addr, socklen_t* _addrlen) override
+		{
+			return accept(this->sockfd, _addr, _addrlen);
+		}
+
+		virtual int Read(void* _buffer, size_t _len)
+		{
+			return read(this->sockfd, _buffer, _len);
+		}
+
+		virtual int Write(const void* _buffer, size_t _len) override
+		{
+			return write(this->sockfd, _buffer, _len);
+		}
+
+		virtual int Get() const override
+		{
+			return this->sockfd;
+		}
+	};
+
+	class SSLSocket: virtual public ISocket
+	{
+	private:
+		using SSL_Ptr = std::unique_ptr<SSL, decltype(&SSL_free)>;
+
+		Socket sock;
+		SSL_Ptr ssl;
+
+	public:
+		SSLSocket(int _sockfd, SSL_CTX* _ctx):
+			sock(_sockfd),
+			ssl(SSL_new(_ctx), SSL_free)
+		{
+			//绑定ssl
+                	SSL_set_fd(this->ssl.get(), this->sock.Get());
+
+			if(SSL_accept(this->ssl.get()) == -1)
+			{
+				//close(_sockfd);
+				throw std::runtime_error("SSL accept failed!");
+			}	
+		}
+
+		virtual int Bind(const sockaddr* _addr, socklen_t _addrlen) override
+		{
+			return this->sock.Bind(_addr, _addrlen);
+		}
+
+		virtual int Listen(int _backlog) override
+		{
+			return this->sock.Listen(_backlog);
+		}
+
+		virtual int Accept(sockaddr* _addr, socklen_t* _addrlen) override
+		{
+			return this->sock.Accept(_addr, _addrlen);
+		}
+
+		virtual int Read(void* _buffer, size_t _len)  override
+		{
+			return SSL_read(this->ssl.get(), _buffer, _len);
+		}
+
+		virtual int Write(const void* _buffer, size_t _len) override
+		{
+			return SSL_write(this->ssl.get(), _buffer, _len);
+		}
+
+		virtual int Get() const override
+		{
+			return this->sock.Get();
+		}
+
+		SSL* GetSSL() const
+		{
+			return this->ssl.get();
+		}
+
+
+	};
+
 	class Websocket
 	{
 	private:
@@ -876,6 +1008,7 @@ namespace web
 
 		std::unique_ptr<Router> router;
 
+		bool useSSL;
 		bool listenSignal;
 
 		//返回websocket的Sec-Websocket-Accept码
@@ -924,12 +1057,13 @@ namespace web
 		//参考:
 		//https://blog.csdn.net/zhusongziye/article/details/80316127
 		//https://blog.csdn.net/hnzwx888/article/details/84021754
-		static WebsocketData GetWebsocketMessage(SSL* _ssl)
+		static WebsocketData GetWebsocketMessage(SSLSocket* _sslSock)
 		{
 			char buffer[1024];
 
 			memset(buffer, 0, sizeof(buffer));
-			const int recvLen = SSL_read(_ssl, buffer, sizeof(buffer));
+			//const int recvLen = SSL_read(_ssl, buffer, sizeof(buffer));
+			const int recvLen = _sslSock->Read(buffer, sizeof(buffer));
 
 			if(recvLen <= 0)
 			{
@@ -985,7 +1119,8 @@ namespace web
 			assert(payloadLen <= length);
 			if(payloadLen < length)
 			{
-				SSL_read(_ssl, info.payload.data() + payloadLen, length - payloadLen);
+				//SSL_read(_ssl, info.payload.data() + payloadLen, length - payloadLen);
+				_sslSock->Read(info.payload.data() + payloadLen, length - payloadLen);
 			}
 
 			if(info.mask == true)
@@ -1005,7 +1140,7 @@ namespace web
 			return info;
 		}
 
-		static HttpRequest GetHttpRequest(SSL* _ssl)
+		static HttpRequest GetHttpRequest(SSLSocket* _sslSock)
 		{
 			int bodyAccLen(0);
 			int bodyReqLen(0);
@@ -1019,7 +1154,8 @@ namespace web
 			char buffer[1024];
 			do
 			{
-				const int recvLen = SSL_read(_ssl, buffer, sizeof(buffer));
+				//const int recvLen = SSL_read(_ssl, buffer, sizeof(buffer));
+				const int recvLen = _sslSock->Read(buffer, sizeof(buffer));
 				if(recvLen <= 0)
 				{
 					//recv超时
@@ -1061,15 +1197,16 @@ namespace web
 			//接收body
 			while(bodyAccLen < bodyReqLen)
 			{
-				const int recvLen =  SSL_read(_ssl, buffer, sizeof(buffer));
+				//const int recvLen =  SSL_read(_ssl, buffer, sizeof(buffer));
 				//const int recvLen = recv(_sockfd, buffer, sizeof(buffer)  1, 0);
+				const int recvLen = _sslSock->Read(buffer, sizeof(buffer));
 
 				if(recvLen <= 0)
 				{
 					//recv超时
 					if(recvLen == -1)
 					{
-						SSL_shutdown(_ssl);
+						//SSL_shutdown(_ssl);
 					}
 
 					std::string temp("recv but return ");
@@ -1088,13 +1225,14 @@ namespace web
 			return HttpRequest(content.data());
 		}
 
-		static void SendHttpResponse(SSL* _ssl, const HttpResponse& _response)
+		static void SendHttpResponse(SSLSocket* _sslSock, const HttpResponse& _response)
 		{
 
 			const size_t contentSize = _response.GetSize();
 			const char* content = _response.GetContent();
 
-			SSL_write(_ssl, content, contentSize);
+			//SSL_write(_ssl, content, contentSize);
+			_sslSock->Write(content, contentSize);
 			//send(_sockfd, content, contentSize, 0);
 		}
 
@@ -1179,7 +1317,7 @@ namespace web
 			return bytes;
 		}
 
-		static inline SSL_Ptr HandleAccept(int _sockfd, int _epfd, SSL_CTX* _ctx)
+		static inline std::unique_ptr<SSLSocket> HandleAccept(int _sockfd, int _epfd, SSL_CTX* _ctx)
 		{
 			//设置超时时间
 			struct timeval timeout={3,0};//3s
@@ -1187,43 +1325,47 @@ namespace web
 				std::cout << "setsoockopt failed!" << std::endl;
     			if(setsockopt(_sockfd, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == -1)
 				std::cout << "setsoockopt failed!" << std::endl;
-			
+		
+			std::unique_ptr<SSLSocket> sslSock(new SSLSocket(_sockfd, _ctx));	
 			//绑定ssl
-			SSL_Ptr ssl(SSL_new(_ctx), SSL_free);
-			SSL_set_fd(ssl.get(), _sockfd);
+			//SSL_Ptr ssl(SSL_new(_ctx), SSL_free);
+			//SSL_set_fd(ssl.get(), _sockfd);
 			//ssl握手
-			if(SSL_accept(ssl.get()) == -1)
-			{
-				close(_sockfd);
-				throw std::runtime_error("SSL accept failed!");
-			}	
+			//if(SSL_accept(ssl.get()) == -1)
+			//{
+			//	close(_sockfd);
+			//	throw std::runtime_error("SSL accept failed!");
+			//}	
 
 			epoll_event ev;
 
-			ev.data.fd = _sockfd;
+			//ev.data.fd = _sockfd;
+			ev.data.fd = sslSock->Get();
 			ev.events = EPOLLIN;
-			epoll_ctl(_epfd, EPOLL_CTL_ADD, _sockfd, &ev);
+			//epoll_ctl(_epfd, EPOLL_CTL_ADD, _sockfd, &ev);
+			epoll_ctl(_epfd, EPOLL_CTL_ADD, sslSock->Get(), &ev);
 		
-			return ssl;
+			//return ssl;
+			return sslSock;
 		}
 
-		static inline void CloseSocket(int _epfd, SSL* _ssl, epoll_event* _ev)
+		static inline void CloseSocket(int _epfd, epoll_event* _ev)
 		{
-			close(_ev->data.fd);
+			//close(_ev->data.fd);
 			epoll_ctl(_epfd, EPOLL_CTL_DEL, _ev->data.fd, _ev);
 		}
 
-		static void ListenProc(HttpServer* _httpServer, sockaddr_in _sockAddr)
+		static void ListenProc(HttpServer* _httpServer, sockaddr_in _sockAddr, bool _useSSL)
 		{
-			const int serverSock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+			Socket serverSock(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
-			if(serverSock == -1)
+			if(serverSock.Get() == -1)
 			{
 				std::cout << "create socket failed!" << std::endl;
 				return;
 			}
 		
-			if(bind(serverSock, reinterpret_cast<sockaddr*>(&_sockAddr), sizeof(_sockAddr)) == -1)
+			if(serverSock.Bind(reinterpret_cast<sockaddr*>(&_sockAddr), sizeof(_sockAddr)) == -1)
 			{	
 				std::cout << "bind socket failed!" << std::endl;
 				perror("bind");
@@ -1232,7 +1374,7 @@ namespace web
 		
 			const int max = 20;
 		
-			if(listen(serverSock, max))
+			if(serverSock.Listen(max))
 			{
 				std::cout << "listen failed!" << std::endl;
 				return;
@@ -1248,9 +1390,9 @@ namespace web
 			}
 
 			epoll_event ev;	
-			ev.data.fd = serverSock;
+			ev.data.fd = serverSock.Get();
 			ev.events = EPOLLIN;
-			if(epoll_ctl(epfd, EPOLL_CTL_ADD, serverSock, &ev) == -1)
+			if(epoll_ctl(epfd, EPOLL_CTL_ADD, serverSock.Get(), &ev) == -1)
 			{
 				std::cout << "epoll control failed!" << std::endl;
 				return;
@@ -1308,7 +1450,7 @@ namespace web
 				return;
 			}
 			
-			std::unordered_map<int, SSL_Ptr> sslMap;
+			std::unordered_map<int, std::unique_ptr<SSLSocket>> sslMap;
 			std::unordered_map<int, std::unique_ptr<Websocket>> websocketMap;
 			std::unordered_map<int, std::string> websocketUrlMap;
 
@@ -1324,12 +1466,12 @@ namespace web
 				for(int i = 0; i < nfds; i++)
 				{
 					//该描述符为服务器则accept
-					if(events[i].data.fd == serverSock)
+					if(events[i].data.fd == serverSock.Get())
 					{
 						sockaddr_in clntAddr = {};
 				             	socklen_t size = sizeof(clntAddr);
 		
-						const int connfd = accept(serverSock, reinterpret_cast<sockaddr*>(&clntAddr), &size);
+						const int connfd = serverSock.Accept(reinterpret_cast<sockaddr*>(&clntAddr), &size);
 						if(connfd == -1)
 						{
 							std::cout << "accept failed!" << std::endl;
@@ -1340,8 +1482,10 @@ namespace web
 
 						try
 						{
-							SSL_Ptr temp(HttpServer::HandleAccept(connfd, epfd, ctx.get()));
-							sslMap.insert(std::pair<int, SSL_Ptr>(connfd, std::move(temp)));
+							//SSL_Ptr temp(HttpServer::HandleAccept(connfd, epfd, ctx.get()));
+							//sslMap.insert(std::pair<int, SSL_Ptr>(connfd, std::move(temp)));
+							std::unique_ptr<SSLSocket> sslSock(HttpServer::HandleAccept(connfd, epfd, ctx.get()));
+							sslMap.insert(std::pair<int, std::unique_ptr<SSLSocket>>(connfd, std::move(sslSock)));
 						}
 						catch(std::runtime_error _ex)
 						{
@@ -1362,7 +1506,7 @@ namespace web
 								if(info.opcode == 8)
 								{
 									_httpServer->router->RunWebsocketDisconnectCallback(websocketUrlMap.at(events[i].data.fd), websocketMap.at(events[i].data.fd).get());
-									HttpServer::CloseSocket(epfd, sslMap.at(events[i].data.fd).get(), &events[i]);
+									HttpServer::CloseSocket(epfd, &events[i]);
 									sslMap.erase(events[i].data.fd);
 									websocketUrlMap.erase(events[i].data.fd);
 									websocketMap.erase(events[i].data.fd);
@@ -1377,7 +1521,7 @@ namespace web
 								_httpServer->router->RunWebsocketDisconnectCallback(websocketUrlMap.at(events[i].data.fd), websocketMap.at(events[i].data.fd).get());
 								std::cout << "websocke error:" << _ex.what() << std::endl;
 								std::cout << "url:" << websocketUrlMap.at(events[i].data.fd) << std::endl;
-								HttpServer::CloseSocket(epfd, sslMap.at(events[i].data.fd).get(), &events[i]);
+								HttpServer::CloseSocket(epfd, &events[i]);
 								sslMap.erase(events[i].data.fd);
 								websocketUrlMap.erase(events[i].data.fd);
 								websocketMap.erase(events[i].data.fd);
@@ -1409,7 +1553,7 @@ namespace web
 									HttpServer::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
 									std::cout << "回复websocket完毕" << std::endl;
 									
-									std::unique_ptr<Websocket> temp(new Websocket(sslMap.at(events[i].data.fd).get()));
+									std::unique_ptr<Websocket> temp(new Websocket(sslMap.at(events[i].data.fd)->GetSSL()));
 									
 									try 
 									{
@@ -1471,7 +1615,7 @@ namespace web
 									
 									if(request.GetHeader().GetConnection() != "keep-alive")
 									{
-										HttpServer::CloseSocket(epfd, sslMap.at(events[i].data.fd).get(), &events[i]);
+										HttpServer::CloseSocket(epfd, &events[i]);
 										sslMap.erase(events[i].data.fd);
 									}
 								}
@@ -1480,7 +1624,7 @@ namespace web
 							catch(std::runtime_error _ex)
 							{
 								std::cout << _ex.what() << std::endl;
-								HttpServer::CloseSocket(epfd, sslMap.at(events[i].data.fd).get(), &events[i]);
+								HttpServer::CloseSocket(epfd, &events[i]);
 								sslMap.erase(events[i].data.fd);
 							}
 						}
@@ -1493,7 +1637,6 @@ namespace web
 
 			}
 
-			close(serverSock);
 			std::cout << "server close" << std::endl;
 		}
 
@@ -1506,7 +1649,8 @@ namespace web
 
 	public:
 		HttpServer(std::unique_ptr<Router>&& _router):
-			router(std::move(_router))
+			router(std::move(_router)),
+			useSSL(false)
 		{
 			this->InitSSL();
 
@@ -1520,6 +1664,11 @@ namespace web
 			//https://stackoverflow.com/questions/32040760/c-openssl-sigpipe-when-writing-in-closed-pipe?r=SearchResults
 		}
 
+		void UseSSL(bool _isUse)
+		{
+			this->useSSL = _isUse;
+		}
+
 		void Listen(std::string_view _address, int _port)
 		{
 			this->listenSignal = true;
@@ -1529,7 +1678,7 @@ namespace web
 			serverAddr.sin_addr.s_addr = inet_addr(_address.data());
 			serverAddr.sin_port = htons(_port);
 
-			std::thread proc(HttpServer::ListenProc, this, serverAddr);
+			std::thread proc(HttpServer::ListenProc, this, serverAddr, this->useSSL);
 
 			std::cout << "server listening... ip:" << _address << " port:" << ntohs(serverAddr.sin_port) << std::endl;
 
