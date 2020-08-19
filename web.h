@@ -497,7 +497,7 @@ namespace web
 			
 			if(_len > std::numeric_limits<uint16_t>::max())
 			{
-				std::cout << "7bit + 64bit" << std::endl;
+				//std::cout << "7bit + 64bit" << std::endl;
 
 				bytes.push_back(127);
 				uint64_t len;
@@ -505,13 +505,13 @@ namespace web
 				size = len;
 
 				//将本机字节序转换到网络字节序
-				len = htons(size);
+				len = htonl(size);
 
 				bytes.insert(bytes.end(), reinterpret_cast<char*>(&len), reinterpret_cast<char*>(&len) + sizeof(len));
 			}
 			else if(_len >= 126)
 			{
-				std::cout << "7bit + 16bit" << std::endl;
+				//std::cout << "7bit + 16bit" << std::endl;
 
 				bytes.push_back(126);
 				uint16_t len;
@@ -525,7 +525,7 @@ namespace web
 			}
 			else
 			{
-				std::cout << "7bit" << std::endl;
+				//std::cout << "7bit" << std::endl;
 				bytes.push_back(_len);
 				size = _len;
 			}
@@ -964,7 +964,7 @@ namespace web
 			}
 			else if(length == 127)
 			{
-				length = *reinterpret_cast<uint64_t*>(&buffer[2]);
+				length = ntohl(*reinterpret_cast<uint64_t*>(&buffer[2]));
 				readOffset += sizeof(uint64_t);
 			}
 
@@ -1375,7 +1375,8 @@ namespace web
 							catch (std::runtime_error _ex)
 							{
 								_httpServer->router->RunWebsocketDisconnectCallback(websocketUrlMap.at(events[i].data.fd), websocketMap.at(events[i].data.fd).get());
-								std::cout << _ex.what() << std::endl;
+								std::cout << "websocke error:" << _ex.what() << std::endl;
+								std::cout << "url:" << websocketUrlMap.at(events[i].data.fd) << std::endl;
 								HttpServer::CloseSocket(epfd, sslMap.at(events[i].data.fd).get(), &events[i]);
 								sslMap.erase(events[i].data.fd);
 								websocketUrlMap.erase(events[i].data.fd);
@@ -1407,12 +1408,26 @@ namespace web
 
 									HttpServer::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
 									std::cout << "回复websocket完毕" << std::endl;
-									websocketUrlMap.insert(std::pair<int, std::string>(static_cast<int>(events[i].data.fd), request.GetUrl()));
 									
 									std::unique_ptr<Websocket> temp(new Websocket(sslMap.at(events[i].data.fd).get()));
+									
+									try 
+									{
+										_httpServer->router->RunWebsocketConnectCallback(request.GetUrl(), temp.get(), request.GetHeader());
 
-									websocketMap.insert(std::pair<int, std::unique_ptr<Websocket>>(static_cast<int>(events[i].data.fd), std::move(temp)));
-									_httpServer->router->RunWebsocketConnectCallback(request.GetUrl(), websocketMap.at(events[i].data.fd).get(), request.GetHeader());
+										websocketMap.insert(std::pair<int, std::unique_ptr<Websocket>>(static_cast<int>(events[i].data.fd), std::move(temp)));
+										websocketUrlMap.insert(std::pair<int, std::string>(static_cast<int>(events[i].data.fd), request.GetUrl()));
+									}
+									catch(std::runtime_error _ex)
+									{
+										std::cout << "websocket error:" << _ex.what() << std::endl;
+										std::cout << "url:" << request.GetUrl() << std::endl;
+									}
+									catch(std::logic_error _ex)
+									{
+										std::cout << "websocket error:" << _ex.what() << std::endl;
+										std::cout << "url:" << request.GetUrl() << std::endl;
+									}
 								}
 								else
 								{
@@ -1421,6 +1436,7 @@ namespace web
 										const UrlParam params(HttpServer::JsonToUrlParam(request.GetBody(), request.GetBodyLen()));
 
 										HttpResponse response = _httpServer->router->RunCallback(request.GetType(), request.GetUrl(), params, request.GetHeader());
+
 										HttpServer::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
 									}
 									else if(request.GetType() == "GET")
@@ -1488,11 +1504,6 @@ namespace web
 			OpenSSL_add_all_algorithms();
 		}
 
-		static void sigpipe_handler(int _val)
-		{
-			std::cout<< "sigpipe_handler:" << _val << std::endl;
-		}
-
 	public:
 		HttpServer(std::unique_ptr<Router>&& _router):
 			router(std::move(_router))
@@ -1502,21 +1513,11 @@ namespace web
 			struct sigaction sh;
    			struct sigaction osh;
 
-			//当SSL_shutdown、SSL_write 等对远端进行操作但对方已经断开连接时会触发异常信号、导致程序崩溃、
-			//以下代码似乎可以忽略这个信号
+			//**忽略socket发送数据远端关闭时,触发的SIGIPIPE信号
+			signal(SIGPIPE, SIG_IGN);
+
+			//**当SSL_shutdown、SSL_write 等对远端进行操作但对方已经断开连接时会触发异常信号、导致程序崩溃、
 			//https://stackoverflow.com/questions/32040760/c-openssl-sigpipe-when-writing-in-closed-pipe?r=SearchResults
-   			sh.sa_handler = &HttpServer::sigpipe_handler; //Can set to SIG_IGN
-   			// Restart interrupted system calls
-   			sh.sa_flags = SA_RESTART;
-
-   			// Block every signal during the handler
-   			sigemptyset(&sh.sa_mask);
-
-   			if (sigaction(SIGPIPE, &sh, &osh) < 0)
-   			{
-				std::cout << "sigcation failed!" << std::endl;
-   			}
-			//
 		}
 
 		void Listen(std::string_view _address, int _port)
@@ -1580,6 +1581,13 @@ namespace web
 
 	HttpResponse Json(std::string_view _str)
 	{
-		return HttpResponse(200, {}, _str.data(), _str.size());
+		std::vector<HttpAttr> attrs = 
+		{
+			{"Access-Control-Allow-Origin", "*"}
+		};
+
+
+
+		return HttpResponse(200, std::move(attrs), _str.data(), _str.size());
 	}
 };

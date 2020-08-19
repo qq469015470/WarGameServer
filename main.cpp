@@ -38,7 +38,7 @@ web::HttpResponse Login(const web::UrlParam& _params, const web::HttpHeader& _he
 
 		auto token = userService.Login(_params["username"].ToString(), _params["password"].ToString());
 			
-			if(token.has_value())
+		if(token.has_value())
 			return web::Json(*token);
 		else
 			return web::Json("");

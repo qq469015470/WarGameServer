@@ -21,6 +21,8 @@ class ISnake
 public:
 	virtual ~ISnake() = default;
 
+	virtual void AddBody() = 0;
+
 	virtual std::vector<ISnakeBody*> GetBodys() = 0;
 
 	virtual void Move(glm::vec2 _dir) = 0;
@@ -51,9 +53,11 @@ private:
 	float moveTime;
 
 public:
-	Snake(std::unique_ptr<ISnakeBody>&& _head);
+	Snake();
 
 	virtual std::vector<ISnakeBody*> GetBodys() override;
+
+	virtual void AddBody() override;
 
 	virtual void Move(glm::vec2 _dir) override;
 
