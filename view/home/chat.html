@@ -69,7 +69,7 @@
 		var ws;
 
 		function SetUpChat() {
-			ws = new WebSocket('wss://' + window.location.host + '/chat');
+			ws = new WebSocket('ws://' + window.location.host + '/chat');
 			var status = $('#status');
 			                                                                   
 			ws.onopen = function(evt) {

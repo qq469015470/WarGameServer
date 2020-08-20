@@ -203,10 +203,9 @@ public:
 	}
 };
 
-
-
-int main(int _argc, char** _args)
+void ListenProc()
 {
+
 	db::Database().UseDb("WarGameServer");
 
 	Chat chat;
@@ -217,6 +216,11 @@ int main(int _argc, char** _args)
 	web::HttpServer server(std::move(router));
 
 	server.Listen("192.168.1.105", 9001);
+}
+
+int main(int _argc, char** _args)
+{
+	std::thread serverProc(ListenProc);
 
 	GameLoop();
 

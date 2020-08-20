@@ -113,6 +113,8 @@ public:
 
 int main(int _argc, char** _args)
 {
+
+
 	db::Database().UseDb("WarGameServer");
 	Chat chat;
 
@@ -129,12 +131,13 @@ int main(int _argc, char** _args)
 	router->RegisterWebsocket("/chat", &Chat::ChatConnect, &Chat::ChatMessage, &Chat::ChatDisconnect, &chat); 
 
 	web::HttpServer server(std::move(router));
-	server.Listen(_args[1], std::atoi(_args[2]));
+	server.UseSSL(false)
+		.Listen(_args[1], std::atoi(_args[2]));
 
-	while(true)
-	{
-		std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-	}
+	//while(true)
+	//{
+	//	std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+	//}
 
 	return 0;
 }
