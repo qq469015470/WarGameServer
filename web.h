@@ -679,14 +679,20 @@ namespace web
 		{
 			std::vector<char> data(this->PackMessage(_text.data(), _text.size(), false));
 			
-			sock->Write(data.data(), data.size());
+			if(sock->Write(data.data(), data.size()) != data.size())
+			{
+				throw std::runtime_error("websocket send failed!");
+			}
 		}
 
 		void SendByte(char* _data, size_t _len)
 		{
 			std::vector<char> data(this->PackMessage(_data, _len, true));
 
-			this->sock->Write(data.data(), data.size());
+			if(sock->Write(data.data(), data.size()) != data.size())
+			{
+				throw std::runtime_error("websocket send failed!");
+			}                                                          		
 		}
 	};
 

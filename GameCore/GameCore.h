@@ -6,6 +6,24 @@
 #include <list>
 #include <memory>
 #include <unordered_map>
+#include <random>
+#include <functional>
+
+enum class ItemId:uint8_t 
+{
+	Food = 0
+};
+
+//物品接口(涵盖果实)
+class IItem
+{
+public:
+	virtual ~IItem() = default;
+
+	virtual uint8_t GetId() const = 0;
+	virtual void SetPosition(glm::vec2 _position) = 0;
+	virtual const glm::vec2& GetPosition() const = 0;	
+};
 
 class ISnakeBody
 {
@@ -23,7 +41,7 @@ public:
 
 	virtual void AddBody() = 0;
 
-	virtual std::vector<ISnakeBody*> GetBodys() = 0;
+	virtual std::vector<ISnakeBody*> GetBodys() const = 0;
 
 	virtual void Move(glm::vec2 _dir) = 0;
 	
@@ -55,7 +73,7 @@ private:
 public:
 	Snake();
 
-	virtual std::vector<ISnakeBody*> GetBodys() override;
+	virtual std::vector<ISnakeBody*> GetBodys() const override;
 
 	virtual void AddBody() override;
 
@@ -64,16 +82,52 @@ public:
 	virtual void FixedUpdate(const float& _deltaTime) override;
 };
 
+class Food: virtual public IItem
+{
+private:
+	glm::vec2 pos;
+
+public:
+	Food();
+
+	virtual uint8_t GetId() const override;
+	virtual void SetPosition(glm::vec2 _position) override;	
+	virtual const glm::vec2& GetPosition() const override;
+};
+
 class GameScene
 {
 private:
+	using ItemAddCallback = std::function<void(const IItem*)>;
+	using ItemRemoveCallback = std::function<void(const IItem*)>;
+
+	std::random_device rd;
+
 	std::unordered_map<ISnake*, std::unique_ptr<ISnake>> snakes;
 	std::vector<ISnake*> snakesVec;
 
+	std::unordered_map<IItem*, std::unique_ptr<IItem>> items;
+	std::vector<IItem*> itemsVec;
+
+	ItemAddCallback itemAddCallback;
+	ItemRemoveCallback itemRemoveCallback;
+
+	//生成果实的时间
+	float foodTime;
+	
+	IItem* AddItem(ItemId _id, glm::vec2 _position);
+	void RemoveItem(IItem* _item);
+
 public:
+	GameScene();
+
 	ISnake* AddSnake(int _snakeId);
-	std::vector<ISnake*> GetSnakes();
+	std::vector<ISnake*> GetSnakes() const;
 	void RemoveSnake(ISnake* _snake);
+
+	std::vector<IItem*> GetItems() const;
+
+	void SetItemNotifity(ItemAddCallback _addCallback, ItemRemoveCallback _removeCallback);
 	
 	void FixedUpdate(const float& _deltaTime);
 };

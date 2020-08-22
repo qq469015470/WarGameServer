@@ -5,87 +5,20 @@
 
 #include <chrono>
 #include <unordered_map>
-
-struct SnakeBodyInfo
-{
-	float x;
-	float y;	
-};
-
-GameScene scene;
-std::vector<char> infos;
-
-std::vector<char> GetInfo(std::vector<ISnake*> _snakes)
-{
-	std::vector<char> info;
-
-	//发送游戏信息结构
-	//uint16位为人数
-	//之后的为蛇身信息
-	
-	uint16_t size(0);
-
-	info.insert(info.end(), reinterpret_cast<char*>(&size), reinterpret_cast<char*>(&size) + sizeof(size));
-
-	for(const auto& item: _snakes)
-	{
-		for(const auto& elem: item->GetBodys())
-		{
-			const glm::vec2 pos = elem->GetPosition();
-
-			SnakeBodyInfo temp;
-
-			temp.x = pos.x;
-			temp.y = pos.y;
-
-			info.insert(info.end(), reinterpret_cast<char*>(&temp), reinterpret_cast<char*>(&temp) + sizeof(temp));
-
-			size++;
-		}
-	}
-
-	std::copy(reinterpret_cast<char*>(&size), reinterpret_cast<char*>(&size) + sizeof(size), info.begin());
-
-	return info;
-}
-
-void GameLoop()
-{
-	std::chrono::steady_clock::time_point past(std::chrono::steady_clock::now());
-
-	while(true)
-	{
-		auto now = std::chrono::steady_clock::now();
-		auto timespan = std::chrono::duration_cast<std::chrono::milliseconds>(now - past);
-
-		constexpr float deltaTime = 1.0f / 20.0f;
-		constexpr float deltaTimeMills = deltaTime * 1000;
-
-		if(timespan.count() < deltaTimeMills || timespan.count() == 0)
-			continue;
-
-		past = now;
-
-		int updateCount(timespan.count() / deltaTimeMills);
-
-		past += std::chrono::milliseconds(static_cast<int>(updateCount * deltaTimeMills));
-
-		for(int i = 0; i < updateCount; i++)
-		{
-			scene.FixedUpdate(deltaTime);	
-		}
-
-		::infos = GetInfo(scene.GetSnakes());
-	}
-}
+#include <mutex>
 
 class Chat
 {
 private:
+	GameScene scene;
 	UserService userService;
 
 	std::unordered_map<std::string, ISnake*> snakeMap;
 	std::unordered_map<web::Websocket*, std::string> tokenMap;
+	std::unordered_map<ISnake*, User> userMap;
+
+	//线程锁
+	std::mutex sceneMtx;
 
 	static std::vector<std::string> GetArgs(const std::string& _cmd)
 	{
@@ -119,15 +52,22 @@ private:
 				_websocket->SendText("error:repeat login!");
 			}
 			else
-			{	
-				this->snakeMap.insert(std::pair<std::string, ISnake*>(_token.data(), scene.AddSnake(0)));
+			{
+				std::lock_guard lg(this->sceneMtx);
+
+				ISnake* snake(this->scene.AddSnake(0));
+				this->snakeMap.insert(std::pair<std::string, ISnake*>(_token.data(), snake));
 				this->tokenMap.insert(std::pair<web::Websocket*, std::string>(_websocket, _token.data()));
+				this->userMap.insert(std::pair<ISnake*, User>(snake, *user));
 			}
 		}
 	}
 
+
 	inline void Logout(web::Websocket* _websocket)
 	{
+		std::lock_guard lg(this->sceneMtx);
+
 		auto tokenIter = this->tokenMap.find(_websocket);
 		if(tokenIter == this->tokenMap.end())
 		{
@@ -136,10 +76,11 @@ private:
 
 		ISnake* snakePtr = this->snakeMap.at(tokenIter->second);
 
-		scene.RemoveSnake(snakePtr);
-
+		this->userMap.erase(snakePtr);
 		this->snakeMap.erase(tokenIter->second);
 		this->tokenMap.erase(_websocket);
+
+		this->scene.RemoveSnake(snakePtr);
 	}
 
 	inline void PlayerControl(web::Websocket* _websocket, glm::vec2 _pos)
@@ -150,10 +91,151 @@ private:
 		snake->Move(_pos);
 	}
 
+	std::vector<char> PackGameInfo()
+	{
+		std::vector<char> info;
+	
+		//发送游戏信息结构
+		//char\0结尾
+		//uint16位为全部蛇(玩家)数量
+		//之后的为蛇身信息
+		//
+		//蛇身信息为
+		//char字符串遇到\0则结束
+		//uint16 body数量(非字节数)
+		//每个body
+		//含有两个float32 分别为x,y坐标
+	
+		//添加蛇的信息	
+
+		const auto snakes = this->scene.GetSnakes();
+		uint16_t temp(snakes.size());
+		const char cmd[] = "update";
+
+		info.insert(info.end(), cmd, cmd + sizeof(cmd));	
+		info.insert(info.end(), reinterpret_cast<const char*>(&temp), reinterpret_cast<const char*>(&temp) + sizeof(temp));
+	
+		for(const auto& item: snakes)
+		{
+			const User& user = this->userMap.at(item);
+			
+			info.insert(info.end(), user.name.c_str(), user.name.c_str() + user.name.size() + 1);
+
+			const auto& bodys = item->GetBodys();
+	
+			temp = bodys.size();
+	
+			info.insert(info.end(), reinterpret_cast<const char*>(&temp), reinterpret_cast<const char*>(&temp) + sizeof(temp));
+			for(const auto& elem: bodys)
+			{
+				const glm::vec2 pos = elem->GetPosition();
+	
+				info.insert(info.end(), reinterpret_cast<const char*>(&pos.x), reinterpret_cast<const char*>(&pos.x) + sizeof(pos.x));
+				info.insert(info.end(), reinterpret_cast<const char*>(&pos.y), reinterpret_cast<const char*>(&pos.y) + sizeof(pos.y));
+			}
+		}
+
+		return info;
+	}
+
+	//发送信息到客户端
+	void SendGameInfo()
+	{
+		std::vector<char> temp(this->PackGameInfo());
+
+		for(const auto& item: this->tokenMap)
+		{
+        		item.first->SendByte(temp.data(), temp.size());
+		}
+
+	}
+
 public:
+	Chat()
+	{
+		using TYPE = std::remove_pointer<decltype(this)>::type; 
+
+		std::function<void(const IItem*)> itemAdd = std::bind(&TYPE::SendAddItem, this, std::placeholders::_1);
+		std::function<void(const IItem*)> itemRemove = std::bind(&TYPE::SendRemoveItem, this, std::placeholders::_1);
+
+		this->scene.SetItemNotifity(itemAdd, itemRemove);
+	}
+
+	inline std::vector<char> PackAddItem(const IItem* _item)
+	{
+		//发送additem命令
+		//格式解析:
+		//char\0结尾字符串
+		//uint64_t 道具uid
+		//uint8_t 道具类型
+		//float32 x位置
+		//float32 y位置
+		std::vector<char> info;
+		const char cmd[] = "additem";
+		const uint8_t type = _item->GetId();
+		const uint64_t id = reinterpret_cast<uint64_t>(_item);
+
+		info.insert(info.end(), cmd, cmd + sizeof(cmd));
+		info.insert(info.end(), reinterpret_cast<const char*>(&type), reinterpret_cast<const char*>(&type) + sizeof(type));
+		info.insert(info.end(), reinterpret_cast<const char*>(&id), reinterpret_cast<const char*>(&id) + sizeof(id));
+
+		const glm::vec2 pos = _item->GetPosition();
+
+		info.insert(info.end(), reinterpret_cast<const char*>(&pos.x), reinterpret_cast<const char*>(&pos.x) + sizeof(pos.x));
+		info.insert(info.end(), reinterpret_cast<const char*>(&pos.y), reinterpret_cast<const char*>(&pos.y) + sizeof(pos.y));
+		
+		return info;
+	}
+
+	void SendAddItem(const IItem* _item)
+	{
+		std::vector<char> info(this->PackAddItem(_item));
+
+		{
+			std::lock_guard lg(this->sceneMtx);
+			for(const auto& item: this->tokenMap)
+			{
+				const auto& websocket = item.first;
+
+				websocket->SendByte(info.data(), info.size());
+			}
+		}	
+	}
+
+	void SendRemoveItem(const IItem* _item)
+	{
+		//发送rmitem命令
+		//char\0结尾
+		//uint64_t 道具uid
+
+		std::vector<char> info;
+		const char cmd[] = "rmitem";
+		const uint64_t id = reinterpret_cast<uint64_t>(_item);
+
+		info.insert(info.end(), cmd, cmd + sizeof(cmd));
+		info.insert(info.end(), reinterpret_cast<const char*>(&id), reinterpret_cast<const char*>(&id) + sizeof(id));
+
+		{
+			std::lock_guard lg(this->sceneMtx);
+			for(const auto& item: this->tokenMap)
+			{
+				const auto& websocket = item.first;
+
+
+				websocket->SendByte(info.data(), info.size());
+			}
+		}	
+	}
+
 	void OnConnect(web::Websocket* _websocket, const web::HttpHeader& _header)
 	{
+		std::lock_guard lg(this->sceneMtx);
+		for(const auto& item: this->scene.GetItems())
+		{
+			std::vector<char> temp(this->PackAddItem(item));
 
+			_websocket->SendByte(temp.data(), temp.size());
+		}	
 	}
 
 	void OnMessage(web::Websocket* _websocket, const char* _data, size_t _len)
@@ -173,12 +255,7 @@ public:
 			return;
 		}
 
-		
-		if(args[0] == "update")
-		{
-			_websocket->SendByte(::infos.data(), ::infos.size());
-		}
-		else if(args[0] == "control")
+		if(args[0] == "control")
 		{
 			if(args.size() == 3)
 			{
@@ -188,6 +265,7 @@ public:
 				}
 				catch(...)
 				{
+					std::cout << "PlayerConrol failed" << std::endl;
 				}
 			}
 		}
@@ -201,17 +279,46 @@ public:
 	{
 		this->Logout(_websocket);
 	}
+
+	void GameLoop()
+	{
+		std::chrono::steady_clock::time_point past(std::chrono::steady_clock::now());
+	
+		while(true)
+		{
+			auto now = std::chrono::steady_clock::now();
+			auto timespan = std::chrono::duration_cast<std::chrono::milliseconds>(now - past);
+	
+			constexpr float deltaTime = 1.0f / 32.0f;
+			constexpr float deltaTimeMills = deltaTime * 1000;
+	
+			if(timespan.count() < deltaTimeMills || timespan.count() == 0)
+				continue;
+	
+			past = now;
+	
+			int updateCount(timespan.count() / deltaTimeMills);
+	
+			past += std::chrono::milliseconds(static_cast<int>(updateCount * deltaTimeMills));
+	
+			for(int i = 0; i < updateCount; i++)
+			{
+				scene.FixedUpdate(deltaTime);	
+			}
+	
+			if(updateCount > 0)
+			{
+				this->SendGameInfo();
+			}
+		}
+	}
 };
 
-void ListenProc()
+void ListenProc(Chat* _chat)
 {
-
-	db::Database().UseDb("WarGameServer");
-
-	Chat chat;
 	std::unique_ptr<web::Router> router(new web::Router());
 
-	router->RegisterWebsocket("/chat", &Chat::OnConnect, &Chat::OnMessage, &Chat::OnDisconnect, &chat);
+	router->RegisterWebsocket("/chat", &Chat::OnConnect, &Chat::OnMessage, &Chat::OnDisconnect, _chat);
 
 	web::HttpServer server(std::move(router));
 
@@ -220,9 +327,13 @@ void ListenProc()
 
 int main(int _argc, char** _args)
 {
-	std::thread serverProc(ListenProc);
+	db::Database().UseDb("WarGameServer");
 
-	GameLoop();
+	Chat chat;
+
+	std::thread serverProc(ListenProc, &chat);
+
+	chat.GameLoop();
 
 	return 0;
 }
