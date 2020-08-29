@@ -166,13 +166,13 @@ namespace web
 	class HttpHeader
 	{
 	private:
-		int contentLength;
-		std::string connection;
-		std::string upgrade;
-		std::string secWebSocketKey;
+		std::string url;
+		size_t contentLength;
+
+		std::unordered_map<std::string, HttpAttr> attrs;
 		std::unordered_map<std::string, std::string> cookies;
 
-		static inline std::string GetAttrValue(std::unordered_map<std::string, HttpAttr> _attrs, std::string_view _key)
+		static inline const char* GetAttrValue(std::unordered_map<std::string, HttpAttr> _attrs, std::string_view _key)
 		{
 			auto iter = _attrs.find(_key.data());
 			if(iter == _attrs.end())
@@ -181,7 +181,7 @@ namespace web
 			}
 			else
 			{
-				return iter->second.GetValue();
+				return iter->second.GetValue().c_str();
 			}
 		}
 
@@ -239,39 +239,36 @@ namespace web
 
 	public:
 		HttpHeader(std::string_view _headerStr):
-			contentLength(0)
+			attrs(this->ReadAttr(_headerStr)),
+			contentLength(0),
+			url("")
 		{
-			std::unordered_map<std::string, HttpAttr> attrs = this->ReadAttr(_headerStr);
-
-			const std::string temp = this->GetAttrValue(attrs, "Content-Length");
+			const std::string temp = this->GetAttrValue(this->attrs, "Content-Length");
 			if(!temp.empty())
-				this->contentLength = std::stoi(temp);
+				this->contentLength = std::stoll(temp);
 
-			this->connection = this->GetAttrValue(attrs, "Connection");
-			this->upgrade = this->GetAttrValue(attrs, "Upgrade");
-			this->secWebSocketKey = this->GetAttrValue(attrs, "Sec-WebSocket-Key");
 
-			this->ReadCookie(this->GetAttrValue(attrs, "Cookie"));
+			this->ReadCookie(this->GetAttrValue(this->attrs, "Cookie"));
 		}
 
-		int GetContentLength() const	
+		size_t GetContentLength() const	
 		{
 			return this->contentLength;
 		}
 
 		const char* GetConnection() const
 		{
-			return this->connection.c_str();
+			return this->GetAttrValue(this->attrs, "Connection");
 		}
 		
 		const char* GetUpgrade() const
 		{
-			return this->upgrade.c_str();
+			return this->GetAttrValue(this->attrs, "Upgrade");
 		}
 
 		const char* GetSecWebSocketKey() const
 		{
-			return this->secWebSocketKey.c_str();
+			return this->GetAttrValue(this->attrs, "Sec-WebSocket-Key");
 		}
 
 		const char* GetCookie(std::string_view _key) const
@@ -281,6 +278,17 @@ namespace web
 				return "";
 			else
 				return iter->second.c_str(); 
+		}
+	
+		std::vector<HttpAttr> GetHttpAttrs() const
+		{
+			std::vector<HttpAttr> attrs;
+			for(const auto& item: this->attrs)
+			{
+				attrs.push_back(item.second);
+			}
+
+			return attrs;
 		}
 	};
 
@@ -473,6 +481,7 @@ namespace web
 		virtual ~ISocket() = default;
 
 		virtual int Bind(const sockaddr* _addr, socklen_t _addrlen) = 0;
+		virtual int Connect(const sockaddr* _addr, socklen_t _addrlen) = 0;
 		virtual int Listen(int _backlog) = 0;
 		virtual int Accept(sockaddr* _addr, socklen_t* _addrlen) = 0;
 		virtual int Read(void* _buffer, size_t _len) = 0;
@@ -510,6 +519,11 @@ namespace web
 		virtual int Bind(const sockaddr* _addr, socklen_t _addrlen) override
 		{
 			return bind(this->sockfd, _addr, _addrlen);
+		}
+
+		virtual int Connect(const sockaddr* _addr, socklen_t _addrlen) override
+		{
+			return connect(this->sockfd, _addr, _addrlen);
 		}
 
 		virtual int Listen(int _backlog) override
@@ -564,6 +578,11 @@ namespace web
 		virtual int Bind(const sockaddr* _addr, socklen_t _addrlen) override
 		{
 			return this->sock.Bind(_addr, _addrlen);
+		}
+
+		virtual int Connect(const sockaddr* _addr, socklen_t _addrlen) override
+		{
+			return this->sock.Connect(_addr, _addrlen);
 		}
 
 		virtual int Listen(int _backlog) override
@@ -868,7 +887,7 @@ namespace web
 		}
 
 		template<typename _TYPE>
-		void RegisterUrl(std::string_view _type, std::string_view _url, HttpResponse(_TYPE::*_func)(const UrlParam&), _TYPE* _ptr)
+		void RegisterUrl(std::string_view _type, std::string_view _url, HttpResponse(_TYPE::*_func)(const UrlParam&, const HttpHeader&), _TYPE* _ptr)
 		{
 			//成员指针调用成员函数指针语法
 			//(_ptr->*_func)(UrlParam());
@@ -998,6 +1017,199 @@ namespace web
 			throw std::logic_error("websocket url not exists");
 		}
 	};
+
+	namespace
+	{
+		HttpRequest GetHttpRequest(ISocket* _sock)
+		{
+			int bodyAccLen(0);
+			int bodyReqLen(0);
+			std::vector<char> content;
+
+			std::string_view view;
+			std::string::size_type left;
+			std::string::size_type right;
+
+			//首次读取数据分析header
+			char buffer[1024];
+			do
+			{
+				const int recvLen = _sock->Read(buffer, sizeof(buffer));
+				if(recvLen <= 0)
+				{
+					//recv超时
+					if(recvLen == -1)
+					{
+						//SSL_read发生io错误时似乎不应该调用shutdown?
+						//SSL_shutdown(_ssl);
+					}
+				                                                
+					std::string temp("recv but return ");
+				                                                
+					temp += std::to_string(recvLen);
+				                                                
+					throw std::runtime_error(temp);
+					//ERR_print_errors_fp(stderr);
+				}
+				
+				content.insert(content.end(), buffer, buffer + recvLen);
+				view = std::string_view(content.data(), content.size());
+
+				left = view.find("\r\n\r\n");
+			}while(left == std::string::npos);
+
+			bodyAccLen = content.size() - (left + 4);
+			
+			left = view.find("Content-Length: ");
+			if(left != std::string::npos)
+			{
+				left += 16; 
+				right = view.find("\r\n", left);
+				if(right != std::string::npos)
+				{
+					bodyReqLen = std::stoi(view.substr(left, right).data());
+				}
+			}
+			
+
+			//接收body
+			while(bodyAccLen < bodyReqLen)
+			{
+				const int recvLen = _sock->Read(buffer, sizeof(buffer));
+
+				if(recvLen <= 0)
+				{
+					//recv超时
+					if(recvLen == -1)
+					{
+						//SSL_shutdown(_ssl);
+					}
+
+					std::string temp("recv but return ");
+
+					temp += std::to_string(recvLen);
+
+					throw std::runtime_error(temp);
+					//ERR_print_errors_fp(stderr);
+				}
+
+				content.insert(content.end(), buffer, buffer + recvLen);
+				bodyAccLen += recvLen;
+			}
+
+			return HttpRequest(content.data());
+		}
+
+		void SendHttpResponse(ISocket* _sock, const HttpResponse& _response)
+		{
+
+			const size_t contentSize = _response.GetSize();
+			const char* content = _response.GetContent();
+
+			_sock->Write(content, contentSize);
+		}
+
+		HttpResponse GetHttpResponse(ISocket* _sock)
+		{
+			std::vector<char> content;
+
+			std::array<char, 1024> buffer;
+			std::string::size_type left;
+			std::string::size_type right;
+			std::string_view view;
+			
+			//分析header
+			do
+			{
+				const int recvLen = _sock->Read(buffer.data(), buffer.size());
+				if(recvLen <= 0)
+				{
+					throw std::runtime_error(std::string("recv but return ") + std::to_string(recvLen));
+				}
+
+				content.insert(content.end(), buffer.begin(), buffer.begin() + recvLen);
+				view = std::string_view(content.data(), content.size());
+				left = view.find("\r\n\r\n");
+			} while(left == std::string::npos);
+
+			view = std::string_view(content.data(), left);
+
+			int bodyReqLen = 0;
+			int bodyAccLen = content.size() - left;
+			std::vector<HttpAttr> attrs;
+
+			left = view.find(" ") + 1;
+			right = view.find(" ", left);
+			const int stateCode = std::stoi(std::string(view.substr(left, right - left)));
+
+			left = view.find("\r\n");
+			right = 0;
+			while(left != std::string::npos && right != std::string::npos)
+			{
+				left += 2;
+				right = view.find(":", left);
+				if(right == std::string::npos)
+					throw std::runtime_error("invaild header");
+
+				const std::string key = std::string(view.substr(left, right - left));
+
+				left = view.find_first_not_of(" ", right) + 2;
+				right = view.find("\r\n", left);
+
+				const std::string value = std::string(view.substr(left, right - left));
+
+				if(key == "Content-Length")
+				{
+					bodyReqLen = std::stoll(value);
+				}
+
+				attrs.push_back(HttpAttr(std::move(key), std::move(value)));
+
+				left = view.find("\r\n", right);
+			}
+
+			//获取body
+			content.clear();
+			while(bodyAccLen < bodyReqLen)
+			{
+				const int recvLen = _sock->Read(buffer.data(), buffer.size());
+				if(recvLen <= 0)
+				{
+					throw std::runtime_error(std::string("recv but return ") + std::to_string(recvLen));
+				}
+
+				bodyAccLen += recvLen;
+
+				content.insert(content.end(), buffer.begin(), buffer.begin() + recvLen);
+			}
+
+			HttpResponse response(stateCode, std::move(attrs), content.data(), content.size());
+
+			return response;
+		}
+	
+		void SendHttpRequest(ISocket* _sock, const HttpRequest& _request)
+		{
+			std::string temp;
+
+			temp += _request.GetType() + " ";
+			temp += _request.GetUrl() + " ";
+			temp += "HTTP/1.1\r\n";
+			
+			for(const auto& item: _request.GetHeader().GetHttpAttrs())
+			{
+				temp += item.GetKey() + ": " + item.GetValue() + "\r\n";
+			}
+
+			temp += "\r\n";
+
+			if(_sock->Write(temp.data(), temp.size()) == -1)
+			{
+				perror("write");
+				throw std::runtime_error("send http request failed!");	
+			}
+		}		
+	}
 
 	class HttpServer
 	{
@@ -1198,95 +1410,6 @@ namespace web
 			} while(lastBuffer.size() > 0);
 
 			return result;
-		}
-
-		static HttpRequest GetHttpRequest(ISocket* _sock)
-		{
-			int bodyAccLen(0);
-			int bodyReqLen(0);
-			std::vector<char> content;
-
-			std::string_view view;
-			std::string::size_type left;
-			std::string::size_type right;
-
-			//首次读取数据分析header
-			char buffer[1024];
-			do
-			{
-				const int recvLen = _sock->Read(buffer, sizeof(buffer));
-				if(recvLen <= 0)
-				{
-					//recv超时
-					if(recvLen == -1)
-					{
-						//SSL_read发生io错误时似乎不应该调用shutdown?
-						//SSL_shutdown(_ssl);
-					}
-				                                                
-					std::string temp("recv but return ");
-				                                                
-					temp += std::to_string(recvLen);
-				                                                
-					throw std::runtime_error(temp);
-					//ERR_print_errors_fp(stderr);
-				}
-				
-				content.insert(content.end(), buffer, buffer + recvLen);
-				view = std::string_view(content.data(), content.size());
-
-				left = view.find("\r\n\r\n");
-			}while(left == std::string::npos);
-
-			bodyAccLen = content.size() - (left + 4);
-			
-			left = view.find("Content-Length: ");
-			if(left != std::string::npos)
-			{
-				left += 16; 
-				right = view.find("\r\n", left);
-				if(right != std::string::npos)
-				{
-					bodyReqLen = std::stoi(view.substr(left, right).data());
-				}
-			}
-			
-
-			//接收body
-			while(bodyAccLen < bodyReqLen)
-			{
-				const int recvLen = _sock->Read(buffer, sizeof(buffer));
-
-				if(recvLen <= 0)
-				{
-					//recv超时
-					if(recvLen == -1)
-					{
-						//SSL_shutdown(_ssl);
-					}
-
-					std::string temp("recv but return ");
-
-					temp += std::to_string(recvLen);
-
-					throw std::runtime_error(temp);
-					//ERR_print_errors_fp(stderr);
-				}
-
-				content.insert(content.end(), buffer, buffer + recvLen);
-				bodyAccLen += recvLen;
-			}
-
-			return HttpRequest(content.data());
-		}
-
-		static void SendHttpResponse(ISocket* _sock, const HttpResponse& _response)
-		{
-
-			const size_t contentSize = _response.GetSize();
-			const char* content = _response.GetContent();
-
-			_sock->Write(content, contentSize);
 		}
 
 		static UrlParam JsonToUrlParam(const char* _body, size_t _len)
@@ -1579,7 +1702,7 @@ namespace web
 						{
 							try
 							{
-								HttpRequest request = HttpServer::GetHttpRequest(sslMap.at(events[i].data.fd).get());
+								HttpRequest request = web::GetHttpRequest(sslMap.at(events[i].data.fd).get());
 
 								//检测是否是websocket
 								if(std::string(request.GetHeader().GetUpgrade()) == "websocket"
@@ -1598,7 +1721,7 @@ namespace web
 
 									HttpResponse response(101, httpAttrs, nullptr, 0);
 
-									HttpServer::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
+									web::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
 									std::cout << "回复websocket完毕" << std::endl;
 									
 									std::unique_ptr<Websocket> temp(new Websocket(sslMap.at(events[i].data.fd).get()));
@@ -1629,7 +1752,7 @@ namespace web
 
 										HttpResponse response = _httpServer->router->RunCallback(request.GetType(), request.GetUrl(), params, request.GetHeader());
 
-										HttpServer::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
+										web::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
 									}
 									else if(request.GetType() == "GET")
 									{
@@ -1643,7 +1766,7 @@ namespace web
 
 											HttpResponse response(200, std::move(attrs), body.data(), body.size());
 											                             
-											HttpServer::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
+											web::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
 										}
 										catch(std::runtime_error _ex)
 										{
@@ -1651,14 +1774,14 @@ namespace web
 
 											HttpResponse response(404, {}, nullptr, 0);
 											                             
-											HttpServer::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
+											web::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
 										}
 									}
 									else
 									{
 										HttpResponse response(404, {}, nullptr, 0);
                                                         			                             
-                                                        			HttpServer::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
+                                                        			web::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
 									}
 									
 									if(request.GetHeader().GetConnection() != "keep-alive")
@@ -1743,6 +1866,49 @@ namespace web
 			this->listenSignal = false;
 
 			return *this;
+		}
+	};
+
+	class HttpClient
+	{
+	private:
+		Socket sock;
+
+	public:
+		HttpClient():
+			sock(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+		{
+
+		}
+
+		void Connect(std::string_view _url, uint16_t _port = 80)
+		{
+			sockaddr_in serverAddr = {};
+
+			serverAddr.sin_family = AF_INET;
+			serverAddr.sin_addr.s_addr = inet_addr(_url.data());
+			serverAddr.sin_port = htons(_port);
+
+			const int result = this->sock.Connect(reinterpret_cast<sockaddr*>(&serverAddr), sizeof(serverAddr));
+			if(result != 0)
+			{
+				perror("connect");
+				throw std::runtime_error("connect failed!");
+			}
+		}
+
+		HttpResponse Get(std::string_view _path)
+		{
+			const std::string content = "GET / HTTP/1.1\r\n"
+						"Accept-Encoding: identity\r\n"
+						"\r\n";
+			HttpRequest request(content.data());
+		
+			web::SendHttpRequest(&this->sock, request);
+
+			const HttpResponse response = web::GetHttpResponse(&this->sock);
+
+			return response;
 		}
 	};
 

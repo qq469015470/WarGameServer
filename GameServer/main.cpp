@@ -10,15 +10,26 @@
 class Chat
 {
 private:
-	GameScene scene;
 	UserService userService;
 
-	std::unordered_map<std::string, ISnake*> snakeMap;
-	std::unordered_map<web::Websocket*, std::string> tokenMap;
-	std::unordered_map<ISnake*, User> userMap;
+	struct UserData
+	{
+		User user;
+		std::string token;
+		web::Websocket* websocket;
+		ISnake* snake;
+	};
 
+	//token关联数据
+	std::unordered_map<std::string, UserData> userMap;
+	std::unordered_map<web::Websocket*, UserData*> websocketMap;
+	std::unordered_map<ISnake*, UserData*> snakeMap;
+
+	//等待初始化的websocket
+	std::queue<UserData*> loginQueue;
+	std::queue<ISnake*> logoutQueue;
 	//线程锁
-	std::mutex sceneMtx;
+	std::mutex loginMtx;
 
 	static std::vector<std::string> GetArgs(const std::string& _cmd)
 	{
@@ -39,6 +50,9 @@ private:
 
 	inline void Login(std::string_view _token, web::Websocket* _websocket)
 	{
+
+		std::lock_guard<std::mutex> lg(this->loginMtx); 
+
 		auto user = this->userService.GetUser(_token.data());
 
 		if(!user.has_value())
@@ -47,51 +61,56 @@ private:
 		}
 		else
 		{
-			if(this->snakeMap.find("token") != this->snakeMap.end())
+			if(this->userMap.find(_token.data()) != this->userMap.end())
 			{
 				_websocket->SendText("error:repeat login!");
 			}
 			else
 			{
-				std::lock_guard lg(this->sceneMtx);
+				UserData temp;
 
-				ISnake* snake(this->scene.AddSnake(0));
-				this->snakeMap.insert(std::pair<std::string, ISnake*>(_token.data(), snake));
-				this->tokenMap.insert(std::pair<web::Websocket*, std::string>(_websocket, _token.data()));
-				this->userMap.insert(std::pair<ISnake*, User>(snake, *user));
+				temp.user = std::move(*user);
+				temp.token = std::string(_token);
+				temp.websocket = _websocket;
+				temp.snake = nullptr;
+
+				const auto result = this->userMap.insert(std::pair<std::string, UserData>(temp.token, std::move(temp)));
+				this->websocketMap.insert(std::pair<web::Websocket*, UserData*>(_websocket, &result.first->second));
+				this->loginQueue.push(&result.first->second);
 			}
 		}
 	}
 
-
 	inline void Logout(web::Websocket* _websocket)
 	{
-		std::lock_guard lg(this->sceneMtx);
+		std::lock_guard<std::mutex> lg(this->loginMtx);
 
-		auto tokenIter = this->tokenMap.find(_websocket);
-		if(tokenIter == this->tokenMap.end())
+		const auto websocketIter = this->websocketMap.find(_websocket);
+		if(websocketIter == this->websocketMap.end())
 		{
 			return;
 		}
+		
+		if(websocketIter->second->snake != nullptr)
+			this->logoutQueue.push(websocketIter->second->snake);
 
-		ISnake* snakePtr = this->snakeMap.at(tokenIter->second);
+		this->userMap.erase(websocketIter->second->token);
+		const auto snakeIter = this->snakeMap.find(websocketIter->second->snake);
 
-		this->userMap.erase(snakePtr);
-		this->snakeMap.erase(tokenIter->second);
-		this->tokenMap.erase(_websocket);
+		this->snakeMap.erase(snakeIter);
+		this->websocketMap.erase(websocketIter);
 
-		this->scene.RemoveSnake(snakePtr);
 	}
 
 	inline void PlayerControl(web::Websocket* _websocket, glm::vec2 _pos)
 	{
-		const std::string& token = this->tokenMap.at(_websocket);
-		ISnake* const snake = this->snakeMap.at(token);
+		const auto websocketIter = this->websocketMap.at(_websocket);
+		ISnake* const snake = websocketIter->snake;
 
 		snake->Move(_pos);
 	}
 
-	std::vector<char> PackGameInfo()
+	std::vector<char> PackGameInfo(const std::vector<ISnake*>& _snakes)
 	{
 		std::vector<char> info;
 	
@@ -108,16 +127,15 @@ private:
 	
 		//添加蛇的信息	
 
-		const auto snakes = this->scene.GetSnakes();
-		uint16_t temp(snakes.size());
+		uint16_t temp(_snakes.size());
 		const char cmd[] = "update";
 
 		info.insert(info.end(), cmd, cmd + sizeof(cmd));	
 		info.insert(info.end(), reinterpret_cast<const char*>(&temp), reinterpret_cast<const char*>(&temp) + sizeof(temp));
 	
-		for(const auto& item: snakes)
+		for(const auto& item: _snakes)
 		{
-			const User& user = this->userMap.at(item);
+			const User& user = this->snakeMap.at(item)->user;
 			
 			info.insert(info.end(), user.name.c_str(), user.name.c_str() + user.name.size() + 1);
 
@@ -136,29 +154,6 @@ private:
 		}
 
 		return info;
-	}
-
-	//发送信息到客户端
-	void SendGameInfo()
-	{
-		std::vector<char> temp(this->PackGameInfo());
-
-		for(const auto& item: this->tokenMap)
-		{
-        		item.first->SendByte(temp.data(), temp.size());
-		}
-
-	}
-
-public:
-	Chat()
-	{
-		using TYPE = std::remove_pointer<decltype(this)>::type; 
-
-		std::function<void(const IItem*)> itemAdd = std::bind(&TYPE::SendAddItem, this, std::placeholders::_1);
-		std::function<void(const IItem*)> itemRemove = std::bind(&TYPE::SendRemoveItem, this, std::placeholders::_1);
-
-		this->scene.SetItemNotifity(itemAdd, itemRemove);
 	}
 
 	inline std::vector<char> PackAddItem(const IItem* _item)
@@ -187,19 +182,17 @@ public:
 		return info;
 	}
 
+public:
 	void SendAddItem(const IItem* _item)
 	{
 		std::vector<char> info(this->PackAddItem(_item));
 
+		for(const auto& item: this->userMap)
 		{
-			std::lock_guard lg(this->sceneMtx);
-			for(const auto& item: this->tokenMap)
-			{
-				const auto& websocket = item.first;
+			web::Websocket* const websocket = item.second.websocket;
 
-				websocket->SendByte(info.data(), info.size());
-			}
-		}	
+			websocket->SendByte(info.data(), info.size());
+		}
 	}
 
 	void SendRemoveItem(const IItem* _item)
@@ -215,27 +208,17 @@ public:
 		info.insert(info.end(), cmd, cmd + sizeof(cmd));
 		info.insert(info.end(), reinterpret_cast<const char*>(&id), reinterpret_cast<const char*>(&id) + sizeof(id));
 
+		for(const auto& item: this->userMap)
 		{
-			std::lock_guard lg(this->sceneMtx);
-			for(const auto& item: this->tokenMap)
-			{
-				const auto& websocket = item.first;
+			web::Websocket* const websocket = item.second.websocket;
 
-
-				websocket->SendByte(info.data(), info.size());
-			}
-		}	
+			websocket->SendByte(info.data(), info.size());
+		}
 	}
 
 	void OnConnect(web::Websocket* _websocket, const web::HttpHeader& _header)
 	{
-		std::lock_guard lg(this->sceneMtx);
-		for(const auto& item: this->scene.GetItems())
-		{
-			std::vector<char> temp(this->PackAddItem(item));
 
-			_websocket->SendByte(temp.data(), temp.size());
-		}	
 	}
 
 	void OnMessage(web::Websocket* _websocket, const char* _data, size_t _len)
@@ -249,7 +232,7 @@ public:
 				this->Login(args[1], _websocket);
 		}
 
-		if(this->tokenMap.find(_websocket) == this->tokenMap.end())
+		if(this->websocketMap.find(_websocket) == this->websocketMap.end())
 		{
 			_websocket->SendText("error:token failed!");
 			return;
@@ -280,45 +263,115 @@ public:
 		this->Logout(_websocket);
 	}
 
-	void GameLoop()
+	bool NeedInitClient()
 	{
-		std::chrono::steady_clock::time_point past(std::chrono::steady_clock::now());
-	
-		while(true)
+		return !this->loginQueue.empty();
+	}
+
+	void InitClient(ISnake* _newSnake, const std::vector<IItem*>& _items)
+	{
+		UserData* const temp = this->loginQueue.front();
+		this->loginQueue.pop();
+
+		//用户已经退出则返回
+		if(this->userMap.find(temp->token) == this->userMap.end())
 		{
-			auto now = std::chrono::steady_clock::now();
-			auto timespan = std::chrono::duration_cast<std::chrono::milliseconds>(now - past);
-	
-			constexpr float deltaTime = 1.0f / 32.0f;
-			constexpr float deltaTimeMills = deltaTime * 1000;
-	
-			if(timespan.count() < deltaTimeMills || timespan.count() == 0)
-				continue;
-	
-			past = now;
-	
-			int updateCount(timespan.count() / deltaTimeMills);
-	
-			past += std::chrono::milliseconds(static_cast<int>(updateCount * deltaTimeMills));
-	
-			for(int i = 0; i < updateCount; i++)
-			{
-				scene.FixedUpdate(deltaTime);	
-			}
-	
-			if(updateCount > 0)
-			{
-				this->SendGameInfo();
-			}
+			return;
+		}
+
+		temp->snake = _newSnake;
+
+
+		this->snakeMap.insert(std::pair<ISnake*, UserData*>(temp->snake, temp));
+
+		for(const auto& item: _items)
+		{
+			std::vector<char> itemData = this->PackAddItem(item);
+			temp->websocket->SendByte(itemData.data(), itemData.size());
+		}
+	}
+
+	bool ClientLogout()
+	{
+		return !this->logoutQueue.empty();
+	}
+
+	ISnake* ClearClient()
+	{
+		const auto result = this->logoutQueue.front();
+		this->logoutQueue.pop(); 
+
+		return result;
+	}
+
+	//发送信息到客户端
+	void SendGameInfo(const std::vector<ISnake*>& _snakes)
+	{
+		std::lock_guard<std::mutex> lg(this->loginMtx);	
+		std::vector<char> temp(this->PackGameInfo(_snakes));
+
+		for(const auto& item: this->userMap)
+		{
+        		item.second.websocket->SendByte(temp.data(), temp.size());
 		}
 	}
 };
 
-void ListenProc(Chat* _chat)
+void GameLoop(GameScene& _scene, Chat& _chat)
+{
+	using TYPE = std::remove_reference<decltype(_chat)>::type; 
+	                                                                                                              
+	std::function<void(const IItem*)> itemAdd = std::bind(&TYPE::SendAddItem, &_chat, std::placeholders::_1);
+	std::function<void(const IItem*)> itemRemove = std::bind(&TYPE::SendRemoveItem, &_chat, std::placeholders::_1);	
+	                                                                                                              
+	_scene.SetItemNotifity(itemAdd, itemRemove);
+
+	std::chrono::steady_clock::time_point past(std::chrono::steady_clock::now());
+	while(true)
+	{
+
+		while(_chat.NeedInitClient())
+		{
+			_chat.InitClient(_scene.AddSnake(0), _scene.GetItems());
+		}
+		while(_chat.ClientLogout())
+		{
+			_scene.RemoveSnake(_chat.ClearClient());
+		}
+
+		auto now = std::chrono::steady_clock::now();
+		auto timespan = std::chrono::duration_cast<std::chrono::milliseconds>(now - past);
+
+		constexpr float deltaTime = 1.0f / 32.0f;
+		constexpr float deltaTimeMills = deltaTime * 1000;
+
+		if(timespan.count() < deltaTimeMills || timespan.count() == 0)
+			continue;
+
+		past = now;
+
+		int updateCount(timespan.count() / deltaTimeMills);
+
+		past += std::chrono::milliseconds(static_cast<int>(updateCount * deltaTimeMills));
+
+		for(int i = 0; i < updateCount; i++)
+		{
+			_scene.FixedUpdate(deltaTime);	
+		}
+
+
+		if(updateCount > 0)
+		{
+			_chat.SendGameInfo(_scene.GetSnakes());	
+		}
+	}
+}
+
+void ListenProc(Chat& _chat)
 {
 	std::unique_ptr<web::Router> router(new web::Router());
 
-	router->RegisterWebsocket("/chat", &Chat::OnConnect, &Chat::OnMessage, &Chat::OnDisconnect, _chat);
+	router->RegisterWebsocket("/chat", &Chat::OnConnect, &Chat::OnMessage, &Chat::OnDisconnect, &_chat);
 
 	web::HttpServer server(std::move(router));
 
@@ -330,10 +383,13 @@ int main(int _argc, char** _args)
 	db::Database().UseDb("WarGameServer");
 
 	Chat chat;
+	GameScene scene;
 
-	std::thread serverProc(ListenProc, &chat);
+	std::thread serverProc(::ListenProc, std::ref(chat));
 
-	chat.GameLoop();
+	::GameLoop(scene, chat);
+
+	serverProc.join();
 
 	return 0;
 }
