@@ -6,6 +6,7 @@
 #include <chrono>
 #include <unordered_map>
 #include <mutex>
+#include <condition_variable>
 
 class Chat
 {
@@ -30,6 +31,9 @@ private:
 	std::queue<ISnake*> logoutQueue;
 	//线程锁
 	std::mutex loginMtx;
+	std::condition_variable loginCV;
+	bool isLoging;
+
 
 	static std::vector<std::string> GetArgs(const std::string& _cmd)
 	{
@@ -50,8 +54,8 @@ private:
 
 	inline void Login(std::string_view _token, web::Websocket* _websocket)
 	{
-
-		std::lock_guard<std::mutex> lg(this->loginMtx); 
+		std::lock_guard<std::mutex> lg(this->loginMtx);
+		this->isLoging = true;
 
 		auto user = this->userService.GetUser(_token.data());
 
@@ -79,11 +83,15 @@ private:
 				this->loginQueue.push(&result.first->second);
 			}
 		}
+
+		this->isLoging = false;
+		this->loginCV.notify_all();
 	}
 
 	inline void Logout(web::Websocket* _websocket)
 	{
 		std::lock_guard<std::mutex> lg(this->loginMtx);
+		this->isLoging = true;
 
 		const auto websocketIter = this->websocketMap.find(_websocket);
 		if(websocketIter == this->websocketMap.end())
@@ -100,6 +108,8 @@ private:
 		this->snakeMap.erase(snakeIter);
 		this->websocketMap.erase(websocketIter);
 
+		this->isLoging = false;
+		this->loginCV.notify_all();
 	}
 
 	inline void PlayerControl(web::Websocket* _websocket, glm::vec2 _pos)
@@ -183,6 +193,12 @@ private:
 	}
 
 public:
+	Chat():
+		isLoging(false)
+	{
+
+	}
+
 	void SendAddItem(const IItem* _item)
 	{
 		std::vector<char> info(this->PackAddItem(_item));
@@ -307,7 +323,9 @@ public:
 	//发送信息到客户端
 	void SendGameInfo(const std::vector<ISnake*>& _snakes)
 	{
-		std::lock_guard<std::mutex> lg(this->loginMtx);	
+		std::unique_lock<std::mutex> ug(this->loginMtx);
+		this->loginCV.wait(ug, [this] () {return !this->isLoging;});
+
 		std::vector<char> temp(this->PackGameInfo(_snakes));
 
 		for(const auto& item: this->userMap)

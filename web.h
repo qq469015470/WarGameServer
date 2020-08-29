@@ -172,7 +172,7 @@ namespace web
 		std::unordered_map<std::string, HttpAttr> attrs;
 		std::unordered_map<std::string, std::string> cookies;
 
-		static inline const char* GetAttrValue(std::unordered_map<std::string, HttpAttr> _attrs, std::string_view _key)
+		static inline const char* GetAttrValue(const std::unordered_map<std::string, HttpAttr>& _attrs, std::string_view _key)
 		{
 			auto iter = _attrs.find(_key.data());
 			if(iter == _attrs.end())
@@ -449,7 +449,8 @@ namespace web
 			
 			header = "HTTP/1.1 " + std::to_string(_stateCode) + " " + HttpResponse::GetSpec(_stateCode) + "\r\n";
 
-			header += "Content-Length: " + std::to_string(_bodyLen) + "\r\n";
+			if(_bodyLen > 0)
+				header += "Content-Length: " + std::to_string(_bodyLen) + "\r\n";
 
 			for(const auto& item: _httpAttrs)
 			{
@@ -698,7 +699,7 @@ namespace web
 		{
 			std::vector<char> data(this->PackMessage(_text.data(), _text.size(), false));
 			
-			if(sock->Write(data.data(), data.size()) != data.size())
+			if(sock->Write(data.data(), data.size()) == -1) 
 			{
 				throw std::runtime_error("websocket send failed!");
 			}
@@ -708,7 +709,7 @@ namespace web
 		{
 			std::vector<char> data(this->PackMessage(_data, _len, true));
 
-			if(sock->Write(data.data(), data.size()) != data.size())
+			if(sock->Write(data.data(), data.size()) == -1)
 			{
 				throw std::runtime_error("websocket send failed!");
 			}                                                          		
@@ -1722,7 +1723,9 @@ namespace web
 									HttpResponse response(101, httpAttrs, nullptr, 0);
 
 									web::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
+
 									std::cout << "回复websocket完毕" << std::endl;
+
 									
 									std::unique_ptr<Websocket> temp(new Websocket(sslMap.at(events[i].data.fd).get()));
 									
