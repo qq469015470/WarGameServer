@@ -1574,6 +1574,16 @@ namespace web
 			//openssl 资料
 			//https://blog.csdn.net/ck784101777/article/details/103833822
 			//https://www.csdn.net/gather_29/NtDagg3sNTAtYmxvZwO0O0OO0O0O.html
+			//生成证书示例
+			//[root@proxy conf]# openssl genrsa > cert.key                            #生成私钥,文件名必须与配置文件内相同
+			//[root@proxy conf]# openssl req -new -x509 -key cert.key > cert.pem     #生成证书,需要输入信息
+			//Country Name (2 letter code) [XX]: china                      #国家
+			//State or Province Name (full name) []:hunan                   #省份
+			//Locality Name (eg, city) [Default City]:changsha              #城市
+			//Organization Name (eg, company) [Default Company Ltd]:xxx     #公司名
+			//Organizational Unit Name (eg, section) []:xxx                 #单位名
+			//Common Name (eg, your name or your server's hostname) []:主机名            #主机名hostname查看
+			//Email Address []:xx@xx.com                                    #邮箱
 			
 			///支持ssl绑定证书
 			SSL_CTX_Ptr ctx(SSL_CTX_new(SSLv23_server_method()), SSL_CTX_free);
