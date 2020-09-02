@@ -333,6 +333,7 @@ namespace db
 		}
 	};
 	mongocxx::instance Database::instance = {};
-	mongocxx::pool Database::pool = mongocxx::pool{mongocxx::uri{}};
+	//默认链接本地mongodb
+	mongocxx::pool Database::pool = mongocxx::pool{mongocxx::uri{"mongodb://localhost:27017"}};
 	std::string Database::dbname = "testdb";
 }

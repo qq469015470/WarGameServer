@@ -393,7 +393,7 @@ void ListenProc(Chat& _chat)
 
 	web::HttpServer server(std::move(router));
 
-	server.Listen("192.168.1.105", 9001);
+	server.Listen("0.0.0.0", 9001);
 }
 
 int main(int _argc, char** _args)
