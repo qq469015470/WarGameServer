@@ -21,6 +21,7 @@
 #include <netinet/in.h>
 #include <unistd.h>
 #include <thread>
+#include <functional>
 
 #include <openssl/ssl.h>
 #include <openssl/sha.h>
@@ -135,6 +136,157 @@ namespace web
 		size_t GetArraySize() const
 		{
 			return this->arrSize;
+		}
+	};
+
+	class JsonObj
+	{
+	private:
+		//自身的成员
+		std::unordered_map<std::string, std::unique_ptr<JsonObj>> attrs;
+		std::optional<std::string> val;
+		std::optional<std::vector<std::unique_ptr<JsonObj>>> arr;
+
+		void DataValid()
+		{
+			if(this->val.has_value() && this->arr.has_value())
+			{
+				throw std::logic_error("can not set value both arr and value");
+			}
+		}
+
+	public:
+		JsonObj& operator[](std::string _key)
+		{
+			auto iter = this->attrs.find(_key); 
+			if(iter == this->attrs.end())
+			{
+				iter = this->attrs.insert(std::pair<std::string, std::unique_ptr<JsonObj>>(_key, std::make_unique<JsonObj>())).first;
+			}
+
+			return *(iter->second);
+		}
+
+		JsonObj& operator=(const char* _value)
+		{
+			this->DataValid();
+			this->val = std::string("\"") + std::string(_value) + "\"";
+
+			return *this;
+		}
+
+		JsonObj& operator=(std::string_view _value)
+		{
+			this->DataValid();
+			this->val = std::string("\"") + std::string(_value) + "\"";
+			                                                            
+			return *this;
+		}
+
+		JsonObj& operator=(int _value)
+		{
+			this->DataValid();
+			this->val = std::to_string(_value);
+		                                            
+			return *this;
+		}
+
+		JsonObj& operator=(int64_t _value)
+		{
+			this->DataValid();
+			this->val = std::to_string(_value);
+
+			return *this;
+		}
+
+		JsonObj& operator=(double _value)
+		{
+			this->DataValid();
+			this->val = std::to_string(_value);
+
+			return *this;
+		}
+		
+		JsonObj& operator=(bool _value)
+		{
+			this->DataValid();
+			if(_value == true)
+			{
+				this->val = "true";
+			}
+			else
+			{
+				this->val = "false";
+			}
+
+			return *this;
+		}
+
+		JsonObj& operator=(const JsonObj& _obj)
+		{
+			this->val = _obj.ToJson();
+
+			return *this;
+		}
+
+		void SetNull()
+		{
+			this->DataValid();
+			this->val = "null";
+		}
+
+		template<typename T>
+		void Push(T _value)
+		{
+			this->DataValid();
+			
+			if(!this->arr.has_value())
+				this->arr = std::vector<std::unique_ptr<JsonObj>>{};
+
+			this->arr->push_back(std::make_unique<JsonObj>());
+			*this->arr->back() = _value;
+		}
+
+		void Push(const JsonObj& _obj)
+		{
+			this->Push<const JsonObj&>(_obj);
+		}
+
+		std::string ToJson() const
+		{
+			if(!this->val.has_value() && !this->arr.has_value() && this->attrs.size() == 0)
+			{
+				return "{}";
+			}
+
+			if(this->val.has_value())
+			{
+				return *this->val;	
+			}
+			else if(this->arr.has_value())
+			{
+				std::string res("[");
+
+				for(const auto& item: this->arr.value())
+				{
+					res += item->ToJson() + ",";
+				}
+
+				res.back() = ']';
+
+				return res;
+			}
+			else
+			{
+				std::string res("{");
+				for(const auto& item: this->attrs)
+				{
+					res += "\"" + item.first  + "\": " + item.second->ToJson() + ",";
+				}
+				res.back() = '}';
+
+				return res;
+			}
 		}
 	};	
 
@@ -1592,47 +1744,50 @@ namespace web
 				std::cout << "ctx is null" << std::endl;
 				return;
 			}
+		
+			if(this->useSSL)
+			{	
+				SSL_CTX_set_options(ctx.get(), SSL_OP_SINGLE_DH_USE | SSL_OP_SINGLE_ECDH_USE | SSL_OP_NO_SSLv2);
+				SSL_CTX_set_verify(ctx.get(), SSL_VERIFY_NONE, NULL);
+				EC_KEY* ecdh = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
+				if(ecdh == nullptr)
+				{
+					std::cout << "EC_KEY_new_by_curve_name failed!" << std::endl;
+					return;
+				}
+
+				if(SSL_CTX_set_tmp_ecdh(ctx.get(), ecdh) != 1)
+				{
+					std::cout << "SSL_CTX_set_tmp_ecdh failed!" << std::endl;
+					return;
+				}
+				//
+
+				const char* publicKey = "cert.pem";
+				const char* privateKey = "cert.key";
+
+				//配置证书公匙
+				if(SSL_CTX_use_certificate_file(ctx.get(), publicKey, SSL_FILETYPE_PEM) != 1)
+				{
+					std::cout << "SSL_CTX_use_cretificate_file failed!" << std::endl;
+					return;
+				}
+				//配置证书私钥
+				if(SSL_CTX_use_PrivateKey_file(ctx.get(), privateKey, SSL_FILETYPE_PEM) != 1)
+				{
+					std::cout << "SSL_CTX_use_PrivateKey_file failed!" << std::endl;
+					return;
+				}
+
+				//验证证书
+				if(SSL_CTX_check_private_key(ctx.get()) != 1)
+				{
+					std::cout << "SSL_CTX_check_private_key failed" << std::endl;
+					return;
+				}
+			}
 			
-			SSL_CTX_set_options(ctx.get(), SSL_OP_SINGLE_DH_USE | SSL_OP_SINGLE_ECDH_USE | SSL_OP_NO_SSLv2);
-			SSL_CTX_set_verify(ctx.get(), SSL_VERIFY_NONE, NULL);
-			EC_KEY* ecdh = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
-			if(ecdh == nullptr)
-			{
-				std::cout << "EC_KEY_new_by_curve_name failed!" << std::endl;
-				return;
-			}
-
-			if(SSL_CTX_set_tmp_ecdh(ctx.get(), ecdh) != 1)
-			{
-				std::cout << "SSL_CTX_set_tmp_ecdh failed!" << std::endl;
-				return;
-			}
-			//
-
-			const char* publicKey = "cert.pem";
-			const char* privateKey = "cert.key";
-
-			//配置证书公匙
-			if(SSL_CTX_use_certificate_file(ctx.get(), publicKey, SSL_FILETYPE_PEM) != 1)
-			{
-				std::cout << "SSL_CTX_use_cretificate_file failed!" << std::endl;
-				return;
-			}
-			//配置证书私钥
-			if(SSL_CTX_use_PrivateKey_file(ctx.get(), privateKey, SSL_FILETYPE_PEM) != 1)
-			{
-				std::cout << "SSL_CTX_use_PrivateKey_file failed!" << std::endl;
-				return;
-			}
-
-			//验证证书
-			if(SSL_CTX_check_private_key(ctx.get()) != 1)
-			{
-				std::cout << "SSL_CTX_check_private_key failed" << std::endl;
-				return;
-			}
-			
-			std::unordered_map<int, std::unique_ptr<ISocket>> sslMap;
+			std::unordered_map<int, std::unique_ptr<ISocket>> socketMap;
 			std::unordered_map<int, std::unique_ptr<Websocket>> websocketMap;
 			std::unordered_map<int, std::string> websocketUrlMap;
 
@@ -1665,7 +1820,7 @@ namespace web
 						try
 						{
 							std::unique_ptr<ISocket> sock(HttpServer::HandleAccept(connfd, epfd, ctx.get()));
-							sslMap.insert(std::pair<int, std::unique_ptr<ISocket>>(connfd, std::move(sock)));
+							socketMap.insert(std::pair<int, std::unique_ptr<ISocket>>(connfd, std::move(sock)));
 						}
 						catch(std::runtime_error _ex)
 						{
@@ -1680,7 +1835,7 @@ namespace web
 						{
 							try
 							{
-								const std::vector<WebsocketData> infos = HttpServer::GetWebsocketMessage(sslMap.at(events[i].data.fd).get());
+								const std::vector<WebsocketData> infos = HttpServer::GetWebsocketMessage(socketMap.at(events[i].data.fd).get());
 								for(const auto& info: infos)
 								{
 									//opcode 为8则表示断开连接
@@ -1688,7 +1843,7 @@ namespace web
 									{
 										_httpServer->router->RunWebsocketDisconnectCallback(websocketUrlMap.at(events[i].data.fd), websocketMap.at(events[i].data.fd).get());
 										HttpServer::CloseSocket(epfd, &events[i]);
-										sslMap.erase(events[i].data.fd);
+										socketMap.erase(events[i].data.fd);
 										websocketUrlMap.erase(events[i].data.fd);
 										websocketMap.erase(events[i].data.fd);
 									}
@@ -1704,7 +1859,7 @@ namespace web
 								std::cout << "websocke error:" << _ex.what() << std::endl;
 								std::cout << "url:" << websocketUrlMap.at(events[i].data.fd) << std::endl;
 								HttpServer::CloseSocket(epfd, &events[i]);
-								sslMap.erase(events[i].data.fd);
+								socketMap.erase(events[i].data.fd);
 								websocketUrlMap.erase(events[i].data.fd);
 								websocketMap.erase(events[i].data.fd);
 							}
@@ -1713,7 +1868,7 @@ namespace web
 						{
 							try
 							{
-								HttpRequest request = web::GetHttpRequest(sslMap.at(events[i].data.fd).get());
+								HttpRequest request = web::GetHttpRequest(socketMap.at(events[i].data.fd).get());
 
 								//检测是否是websocket
 								if(std::string(request.GetHeader().GetUpgrade()) == "websocket"
@@ -1732,12 +1887,12 @@ namespace web
 
 									HttpResponse response(101, httpAttrs, nullptr, 0);
 
-									web::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
+									web::SendHttpResponse(socketMap.at(events[i].data.fd).get(), std::move(response));
 
 									std::cout << "回复websocket完毕" << std::endl;
 
 									
-									std::unique_ptr<Websocket> temp(new Websocket(sslMap.at(events[i].data.fd).get()));
+									std::unique_ptr<Websocket> temp(new Websocket(socketMap.at(events[i].data.fd).get()));
 									
 									try 
 									{
@@ -1759,13 +1914,35 @@ namespace web
 								}
 								else
 								{
+									std::function<void(std::string_view, std::string_view, ISocket*)> logError = 
+									[](std::string_view _url, std::string_view _error, ISocket* _socket)
+									{
+										std::cout << "url:" << _url << std::endl;
+										std::cout << "error:" << _error << std::endl;
+
+										HttpResponse response(404, {}, nullptr, 0);
+										                             
+										web::SendHttpResponse(_socket, std::move(response));
+									};
+
 									if(_httpServer->router->FindUrlCallback(request.GetType(), request.GetUrl()))
 									{
 										const UrlParam params(HttpServer::JsonToUrlParam(request.GetBody(), request.GetBodyLen()));
 
-										HttpResponse response = _httpServer->router->RunCallback(request.GetType(), request.GetUrl(), params, request.GetHeader());
+										try
+										{
+											HttpResponse response = _httpServer->router->RunCallback(request.GetType(), request.GetUrl(), params, request.GetHeader());
+											web::SendHttpResponse(socketMap.at(events[i].data.fd).get(), std::move(response));
+										}
+										catch(std::out_of_range _ex)
+										{
+											logError(request.GetUrl(), _ex.what(), socketMap.at(events[i].data.fd).get());	
+										}
+										catch(std::runtime_error _ex)
+										{
+											logError(request.GetUrl(), _ex.what(), socketMap.at(events[i].data.fd).get());	
+										}
 
-										web::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
 									}
 									else if(request.GetType() == "GET")
 									{
@@ -1779,28 +1956,24 @@ namespace web
 
 											HttpResponse response(200, std::move(attrs), body.data(), body.size());
 											                             
-											web::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
+											web::SendHttpResponse(socketMap.at(events[i].data.fd).get(), std::move(response));
 										}
 										catch(std::runtime_error _ex)
 										{
-											std::cout << _ex.what() << std::endl;
-
-											HttpResponse response(404, {}, nullptr, 0);
-											                             
-											web::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
+											logError(request.GetUrl(), _ex.what(), socketMap.at(events[i].data.fd).get());	
 										}
 									}
 									else
 									{
 										HttpResponse response(404, {}, nullptr, 0);
                                                         			                             
-                                                        			web::SendHttpResponse(sslMap.at(events[i].data.fd).get(), std::move(response));
+                                                        			web::SendHttpResponse(socketMap.at(events[i].data.fd).get(), std::move(response));
 									}
 									
 									if(request.GetHeader().GetConnection() != "keep-alive")
 									{
 										HttpServer::CloseSocket(epfd, &events[i]);
-										sslMap.erase(events[i].data.fd);
+										socketMap.erase(events[i].data.fd);
 									}
 								}
 
@@ -1809,7 +1982,7 @@ namespace web
 							{
 								std::cout << _ex.what() << std::endl;
 								HttpServer::CloseSocket(epfd, &events[i]);
-								sslMap.erase(events[i].data.fd);
+								socketMap.erase(events[i].data.fd);
 							}
 						}
 					}
@@ -1955,6 +2128,13 @@ namespace web
 		file.close();
 
 		return HttpResponse(stateCode, {}, body.data(), body.size());
+	}
+
+	HttpResponse Json(const JsonObj& _json)
+	{
+		std::string res(_json.ToJson());
+
+		return HttpResponse(200, {}, res.data(), res.size());
 	}
 
 	HttpResponse Json(std::string_view _str)
