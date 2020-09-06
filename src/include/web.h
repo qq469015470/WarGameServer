@@ -570,8 +570,9 @@ namespace web
 	class HttpResponse
 	{
 	private:
+		int stateCode;
 		std::vector<char> content;
-		size_t size;
+		std::vector<char> body;
 
 		static inline std::string GetSpec(int _code)
 		{
@@ -593,9 +594,9 @@ namespace web
 		}
 
 	public:
-		HttpResponse(int _stateCode,const std::vector<HttpAttr>& _httpAttrs, const char* _body, unsigned long _bodyLen):
-			content({'\0'}),
-			size(0)
+		HttpResponse(int _stateCode,const std::vector<HttpAttr>& _httpAttrs, const char* _body, size_t _bodyLen):
+			stateCode(_stateCode),
+			content({'\0'})
 		{
 			std::string header;
 			
@@ -612,9 +613,16 @@ namespace web
 			header += "\r\n";
 
 			this->content.resize(header.size() + _bodyLen);
+			this->body.resize(_bodyLen);
 
 			std::copy(header.data(), header.data() + header.size(), this->content.data());
 			std::copy(_body, _body + _bodyLen, this->content.data() + header.size());
+			std::copy(_body, _body + _bodyLen, this->body.data());
+		}
+
+		int GetStateCode() const
+		{
+			return this->stateCode;
 		}
 
 		const char* GetContent() const
@@ -622,9 +630,19 @@ namespace web
 			return this->content.data();
 		}
 
-		size_t GetSize() const
+		size_t GetContentSize() const
 		{
 			return this->content.size();
+		}
+
+		const char* GetBody() const
+		{
+			return this->body.data();
+		}
+
+		size_t GetBodySize() const
+		{
+			return this->body.size();
 		}
 	};
 
@@ -671,6 +689,18 @@ namespace web
 
 		virtual int Bind(const sockaddr* _addr, socklen_t _addrlen) override
 		{
+			//bind 普遍遭遇的问题是试图绑定一个已经在使用的端口。
+			//该陷阱是也许没有活动的套接字存在，但仍然禁止绑定端口（bind 返回 EADDRINUSE），
+			//它由 TCP 套接字状态 TIME_WAIT 引起。该状态在套接字关闭后约保留 2 到 4 分钟。
+			//在 TIME_WAIT 状态退出之后，套接字被删除，该地址才能被重新绑定而不出问题。
+			//等待 TIME_WAIT 结束可能是令人恼火的一件事，特别是如果您正在开发一个套接字服务器，就需要停止服务器来做一些改动，然后重启。
+			//幸运的是，有方法可以避开 TIME_WAIT 状态。可以给套接字应用 SO_REUSEADDR 套接字选项，以便端口可以马上重用。
+			
+			int opt = 1;
+			if(setsockopt(this->sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) != 0)
+			{
+				throw std::runtime_error("setsockopt failed");
+			}
 			return bind(this->sockfd, _addr, _addrlen);
 		}
 
@@ -1256,7 +1286,7 @@ namespace web
 		void SendHttpResponse(ISocket* _sock, const HttpResponse& _response)
 		{
 
-			const size_t contentSize = _response.GetSize();
+			const size_t contentSize = _response.GetContentSize();
 			const char* content = _response.GetContent();
 
 			_sock->Write(content, contentSize);
@@ -1288,7 +1318,7 @@ namespace web
 			view = std::string_view(content.data(), left);
 
 			int bodyReqLen = 0;
-			int bodyAccLen = content.size() - left;
+			int bodyAccLen = content.size() - (left + 4);
 			std::vector<HttpAttr> attrs;
 
 			left = view.find(" ") + 1;
@@ -1311,18 +1341,22 @@ namespace web
 
 				const std::string value = std::string(view.substr(left, right - left));
 
+				//因为httpresponse类会自动增加content-length字段
+				//所以跳过attrs
 				if(key == "Content-Length")
 				{
 					bodyReqLen = std::stoll(value);
 				}
-
-				attrs.push_back(HttpAttr(std::move(key), std::move(value)));
+				else
+				{
+					attrs.push_back(HttpAttr(std::move(key), std::move(value)));
+				}
 
 				left = view.find("\r\n", right);
 			}
 
 			//获取body
-			content.clear();
+			content.erase(content.begin(), content.end() - bodyAccLen);
 			while(bodyAccLen < bodyReqLen)
 			{
 				const int recvLen = _sock->Read(buffer.data(), buffer.size());
@@ -1374,6 +1408,7 @@ namespace web
 
 		bool useSSL;
 		bool listenSignal;
+		Socket serverSock;
 
 		//返回websocket的Sec-Websocket-Accept码
 		//https://www.zhihu.com/question/67784701
@@ -1682,15 +1717,13 @@ namespace web
 
 		void ListenProc(HttpServer* _httpServer, sockaddr_in _sockAddr)
 		{
-			Socket serverSock(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-
-			if(serverSock.Get() == -1)
+			if(this->serverSock.Get() == -1)
 			{
 				std::cout << "create socket failed!" << std::endl;
 				return;
 			}
 		
-			if(serverSock.Bind(reinterpret_cast<sockaddr*>(&_sockAddr), sizeof(_sockAddr)) == -1)
+			if(this->serverSock.Bind(reinterpret_cast<sockaddr*>(&_sockAddr), sizeof(_sockAddr)) == -1)
 			{	
 				std::cout << "bind socket failed!" << std::endl;
 				perror("bind");
@@ -1699,11 +1732,11 @@ namespace web
 		
 			const int max = 20;
 		
-			if(serverSock.Listen(max))
+			if(this->serverSock.Listen(max))
 			{
 				std::cout << "listen failed!" << std::endl;
 				return;
-			}	
+			}
 			
 			epoll_event events[max];
 			const int epfd = epoll_create(max);
@@ -1715,9 +1748,9 @@ namespace web
 			}
 
 			epoll_event ev;	
-			ev.data.fd = serverSock.Get();
+			ev.data.fd = this->serverSock.Get();
 			ev.events = EPOLLIN;
-			if(epoll_ctl(epfd, EPOLL_CTL_ADD, serverSock.Get(), &ev) == -1)
+			if(epoll_ctl(epfd, EPOLL_CTL_ADD, this->serverSock.Get(), &ev) == -1)
 			{
 				std::cout << "epoll control failed!" << std::endl;
 				return;
@@ -1803,12 +1836,12 @@ namespace web
 				for(int i = 0; i < nfds; i++)
 				{
 					//该描述符为服务器则accept
-					if(events[i].data.fd == serverSock.Get())
+					if(events[i].data.fd == this->serverSock.Get())
 					{
 						sockaddr_in clntAddr = {};
 				             	socklen_t size = sizeof(clntAddr);
 		
-						const int connfd = serverSock.Accept(reinterpret_cast<sockaddr*>(&clntAddr), &size);
+						const int connfd = this->serverSock.Accept(reinterpret_cast<sockaddr*>(&clntAddr), &size);
 						if(connfd == -1)
 						{
 							std::cout << "accept failed!" << std::endl;
@@ -2007,7 +2040,8 @@ namespace web
 	public:
 		HttpServer(std::unique_ptr<Router>&& _router):
 			router(std::move(_router)),
-			useSSL(false)
+			useSSL(false),
+			serverSock(AF_INET, SOCK_STREAM, IPPROTO_TCP)
 		{
 			this->InitSSL();
 
@@ -2053,12 +2087,26 @@ namespace web
 
 			return *this;
 		}
+	
+		std::string GetIpAddress()
+		{
+			sockaddr_in sa;
+			socklen_t len = sizeof(sa);
+			if(getsockname(this->serverSock.Get(), reinterpret_cast<sockaddr*>(&sa), &len) != 0)
+			{
+				throw std::runtime_error("get server address failed!");
+			}
+
+			return std::string(inet_ntoa(sa.sin_addr)) + ":" + std::to_string(ntohs(sa.sin_port));
+		}	
 	};
 
 	class HttpClient
 	{
 	private:
 		Socket sock;
+		std::string ip;
+		uint16_t port;
 
 	public:
 		HttpClient():
@@ -2067,12 +2115,15 @@ namespace web
 
 		}
 
-		void Connect(std::string_view _url, uint16_t _port = 80)
+		void Connect(std::string_view _ip, uint16_t _port = 80)
 		{
+			this->ip = _ip;
+			this->port = _port;
+
 			sockaddr_in serverAddr = {};
 
 			serverAddr.sin_family = AF_INET;
-			serverAddr.sin_addr.s_addr = inet_addr(_url.data());
+			serverAddr.sin_addr.s_addr = inet_addr(_ip.data());
 			serverAddr.sin_port = htons(_port);
 
 			const int result = this->sock.Connect(reinterpret_cast<sockaddr*>(&serverAddr), sizeof(serverAddr));
@@ -2083,10 +2134,11 @@ namespace web
 			}
 		}
 
-		HttpResponse Get(std::string_view _path)
+		HttpResponse SendRequest(std::string_view _type, std::string_view _path)
 		{
-			const std::string content = "GET / HTTP/1.1\r\n"
+			const std::string content = std::string(_type) + " " + std::string(_path) + " HTTP/1.1\r\n"
 						"Accept-Encoding: identity\r\n"
+						"Host: " + this->ip + ":" + std::to_string(this->port) + "\r\n"
 						"\r\n";
 			HttpRequest request(content.data());
 		
@@ -2132,9 +2184,14 @@ namespace web
 
 	HttpResponse Json(const JsonObj& _json)
 	{
+		std::vector<HttpAttr> attrs = 
+		{
+			{"Access-Control-Allow-Origin", "*"}
+		};
+
 		std::string res(_json.ToJson());
 
-		return HttpResponse(200, {}, res.data(), res.size());
+		return HttpResponse(200, std::move(attrs), res.data(), res.size());
 	}
 
 	HttpResponse Json(std::string_view _str)
@@ -2143,8 +2200,6 @@ namespace web
 		{
 			{"Access-Control-Allow-Origin", "*"}
 		};
-
-
 
 		return HttpResponse(200, std::move(attrs), _str.data(), _str.size());
 	}

@@ -18,7 +18,7 @@ private:
 	std::vector<RoomInfo*> roomsVec;
 
 public:
-	RoomInfo AddRoom(std::string _name, std::string _ipaddr)
+	RoomInfo AddRoom(std::string _name, std::string _ip)
 	{
 		std::chrono::system_clock::duration d = std::chrono::system_clock::now().time_since_epoch();
 		std::chrono::nanoseconds nan = std::chrono::duration_cast<std::chrono::nanoseconds>(d);
@@ -29,7 +29,7 @@ public:
 
 		temp.roomId = idHash(nan.count());
 		temp.roomName = std::move(_name);
-		temp.ipaddr = std::move(_ipaddr);
+		temp.ipaddr = _ip; 
 	
 		auto res = this->rooms.insert(std::pair<int64_t, RoomInfo>(temp.roomId, std::move(temp)));
 		if(res.second == false)

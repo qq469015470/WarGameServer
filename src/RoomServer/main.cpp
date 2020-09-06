@@ -5,20 +5,31 @@
 class Controller
 {
 private:
-	RoomService roomService;	
+	RoomService roomService;
 
 public:
-	Controller()
-	{
-		for(const auto& item: this->roomService.GetRooms())
-		{
-			std::cout << item->roomId << std::endl;
-		}
-	}
-
 	web::HttpResponse AddRoom(const web::UrlParam& _params, const web::HttpHeader& _header)
 	{
-		this->roomService.AddRoom(_params["name"].ToString(), _params["ip"].ToString());
+		const std::string roomName = _params["name"].ToString();
+		
+		web::HttpClient client;
+
+		//唤醒服务器地址
+		const char* callGameServerAddress = "192.168.1.105";
+		const int port = 7500;
+
+		client.Connect(callGameServerAddress, port);
+
+		web::HttpResponse response = client.SendRequest("POST", "/ExecGameServer");
+
+		if(response.GetStateCode() != 200)
+		{
+			return web::Json("error:request GameCallServer failed!");
+		}
+
+		const std::string ipaddress = std::string(response.GetBody(),  response.GetBodySize());
+	
+		this->roomService.AddRoom(roomName, ipaddress);
 		
 		return web::Json("ok");
 	}
@@ -50,31 +61,6 @@ public:
 
 int main(int _argc, char** _args)
 {
-//	web::JsonObj temp;
-//
-//	std::string asd("newbee");
-//
-//	temp["a"]["wtf"] = "123";
-//	temp["a"]["haha"] = asd;
-//	temp["c"] = 123;
-//	temp["f"] = 123;
-//	temp["f"] = 123.34;
-//	temp["asd"]["attr"] = false;
-//	temp["asd"]["attr2"].SetNull();
-//
-//	temp["asd"]["arrtest"].Push(true);
-//	temp["asd"]["arrtest"].Push(false);
-//	temp["asd"]["arrtest"].Push("测试");
-//
-//	web::JsonObj haha;
-//
-//	haha.Push(temp);
-//	haha.Push(false);
-//
-//	std::cout << temp.ToJson() << std::endl;
-//	std::cout << haha.ToJson() << std::endl;
-//
-//	return 0;
 	if(_argc != 3)
 	{
 		std::cout << "args must be two. args[1] is ip args[2] is port." << std::endl;

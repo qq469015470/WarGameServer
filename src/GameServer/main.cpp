@@ -385,7 +385,7 @@ void GameLoop(GameScene& _scene, Chat& _chat)
 	}
 }
 
-void ListenProc(Chat& _chat)
+void ListenProc(Chat& _chat, const char* _ip, const int _port)
 {
 	std::unique_ptr<web::Router> router(new web::Router());
 
@@ -393,17 +393,23 @@ void ListenProc(Chat& _chat)
 
 	web::HttpServer server(std::move(router));
 
-	server.Listen("0.0.0.0", 9001);
+	server.Listen(_ip, _port);
 }
 
 int main(int _argc, char** _args)
 {
+	if(_argc != 3)
+	{
+		std::cout << "args must be two. args[1] is ip args[2] is port." << std::endl;
+		return -1;
+	}
+
 	db::Database().UseDb("WarGameServer");
 
 	Chat chat;
 	GameScene scene;
 
-	std::thread serverProc(::ListenProc, std::ref(chat));
+	std::thread serverProc(::ListenProc, std::ref(chat), _args[1], std::atoi(_args[2]));
 
 	::GameLoop(scene, chat);
 
