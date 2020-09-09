@@ -50,6 +50,31 @@ web::HttpResponse Login(const web::UrlParam& _params, const web::HttpHeader& _he
 	}
 }
 
+web::HttpResponse UserInfo(const web::UrlParam& _params, const web::HttpHeader& _header)
+{
+	try
+	{
+		UserService userService;
+
+		auto user = userService.GetUser(_params["token"].ToString());
+		if(user.has_value())
+		{
+			web::JsonObj temp;
+
+			temp["name"] = user->name;
+			return web::Json(temp);
+		}
+		else
+		{
+			return web::Json("error:token not exists");
+		}
+	}
+	catch(std::logic_error _ex)
+	{
+		return web::Json(_ex.what());
+	}
+}
+
 web::HttpResponse Register(const web::UrlParam& _params, const web::HttpHeader& _header)
 {
 	try
@@ -125,10 +150,21 @@ int main(int _argc, char** _args)
 	}
 
 	std::unique_ptr<web::Router> router(new web::Router());
-	router->RegisterUrl("GET", "/", &HomePage);
-	router->RegisterUrl("POST", "/Register", &Register);
-	router->RegisterUrl("POST", "/Login", &Login);
-	router->RegisterWebsocket("/chat", &Chat::ChatConnect, &Chat::ChatMessage, &Chat::ChatDisconnect, &chat); 
+	router->RegisterUrl("GET", "/", &::HomePage);
+	router->RegisterUrl("GET", "/UserInfo", &::UserInfo);
+
+	router->RegisterUrl("POST", "/Register", &::Register);
+	router->RegisterUrl("POST", "/Login", &::Login);
+	router->RegisterWebsocket("/chat", &Chat::ChatConnect, &Chat::ChatMessage, &Chat::ChatDisconnect, &chat);
+
+	//daemon用于后台运行
+	//第一个参数非0则不改变当前目录路径
+	//第二个参数非0则不改变当前的输出流指向
+	//if(daemon(1, 1) != 0)
+	//{
+	//	std::cout << "daemon failed" << std::endl;
+	//	return -1;
+	//}
 
 	web::HttpServer server(std::move(router));
 	server.UseSSL(false)

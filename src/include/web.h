@@ -4,6 +4,7 @@
 #include <string>
 #include <iostream>
 #include <map>
+#include <stack>
 #include <typeinfo>
 #include <stdexcept>
 #include <memory>
@@ -60,90 +61,101 @@ namespace web
 		return result;
 	}
 
-	class UrlParam
-	{
-	private:
-		std::optional<std::string> val;
-		size_t arrSize;
-		std::unordered_map<std::string, std::unique_ptr<UrlParam>> params;
+	//class UrlParam
+	//{
+	//private:
+	//	std::optional<std::string> val;
+	//	size_t arrSize;
+	//	std::unordered_map<std::string, std::unique_ptr<UrlParam>> params;
 
-		inline UrlParam& Find(std::string_view _key)
-		{
-			std::unique_ptr<UrlParam>& result(this->params[_key.data()]);
-			
-			if(result == nullptr)
-			{
-				result = std::make_unique<UrlParam>();
-			}
+	//	inline UrlParam& Find(std::string_view _key)
+	//	{
+	//		std::unique_ptr<UrlParam>& result(this->params[_key.data()]);
+	//		
+	//		if(result == nullptr)
+	//		{
+	//			result = std::make_unique<UrlParam>();
+	//		}
 
-			return *result.get();
-		}
+	//		return *result.get();
+	//	}
 
-	public:
-		UrlParam():
-			arrSize(0)
-		{
+	//public:
+	//	UrlParam():
+	//		arrSize(0)
+	//	{
 
-		}
+	//	}
 
-		const UrlParam& operator[](int _index) const
-		{
-			return *this->params.at(std::to_string(_index)).get();
-		}
+	//	const UrlParam& operator[](int _index) const
+	//	{
+	//		return *this->params.at(std::to_string(_index)).get();
+	//	}
 
-		UrlParam& operator[](int _index)
-		{
-			return this->Find(std::to_string(_index));
-		}
+	//	UrlParam& operator[](int _index)
+	//	{
+	//		return this->Find(std::to_string(_index));
+	//	}
 
-		const UrlParam& operator[](std::string_view _key) const
-		{
-			return *this->params.at(_key.data()).get();
-		}
+	//	const UrlParam& operator[](std::string_view _key) const
+	//	{
+	//		return *this->params.at(_key.data()).get();
+	//	}
 
-		UrlParam& operator[](std::string_view _key)
-		{
-			return this->Find(_key);
-		}
+	//	UrlParam& operator[](std::string_view _key)
+	//	{
+	//		return this->Find(_key);
+	//	}
 
-		UrlParam& operator=(std::string_view _value)
-		{
-			this->val = _value;
-			return *this;
-		}
+	//	UrlParam& operator=(std::string_view _value)
+	//	{
+	//		this->val = _value;
+	//		return *this;
+	//	}
 
-		const std::string& ToString() const
-		{
-			if(!this->val.has_value())
-			{
-				throw std::runtime_error("not have val");
-			}
+	//	const std::string& ToString() const
+	//	{
+	//		if(!this->val.has_value())
+	//		{
+	//			throw std::runtime_error("not have val");
+	//		}
 
-			return *this->val;
-		}
+	//		return *this->val;
+	//	}
 
-		//添加数组
-		void PushBack(std::string_view _value)
-		{
-			std::string index(std::to_string(this->arrSize));
+	//	//添加数组
+	//	void PushBack(std::string_view _value)
+	//	{
+	//		std::string index(std::to_string(this->arrSize));
 
-			UrlParam& temp(this->Find(std::to_string(this->arrSize)));
+	//		UrlParam& temp(this->Find(std::to_string(this->arrSize)));
 
-			temp[index] = _value;
-			this->arrSize++;
-		}
+	//		temp[index] = _value;
+	//		this->arrSize++;
+	//	}
 
-		size_t GetArraySize() const
-		{
-			return this->arrSize;
-		}
-	};
+	//	size_t GetArraySize() const
+	//	{
+	//		return this->arrSize;
+	//	}
+	//};
 
 	class JsonObj
 	{
 	private:
+		enum JsonType
+		{
+			STRING,
+			NUMBER,
+			BOOL,
+			NULLVAL,
+			ARRAY,
+			JSON
+		};
+
 		//自身的成员
 		std::unordered_map<std::string, std::unique_ptr<JsonObj>> attrs;
+		JsonType valType;
 		std::optional<std::string> val;
 		std::optional<std::vector<std::unique_ptr<JsonObj>>> arr;
 
@@ -155,22 +167,215 @@ namespace web
 			}
 		}
 
+		JsonObj& operator=(const JsonObj& _jsonObj)
+		{
+			return *this;
+		}
+
+
+
 	public:
+		JsonObj():
+			valType(JsonType::NULLVAL)
+		{
+
+		}
+
+		JsonObj(JsonObj&& _obj):
+			attrs(std::move(_obj.attrs)),
+			valType(std::move(_obj.valType)),
+			val(std::move(_obj.val)),
+			arr(std::move(_obj.arr))
+		{
+		}
+
+		JsonObj& operator=(JsonObj&& _obj)
+		{
+			this->attrs = std::move(_obj.attrs);
+			this->valType = std::move(_obj.valType);
+			this->val = std::move(_obj.val);
+			this->arr = std::move(_obj.arr);
+			return *this;
+		}
+
+		static JsonObj ParseFormData(std::string _formData)
+		{
+			const std::string& json = _formData;
+
+			std::string::size_type left(0);
+			std::string::size_type right(0);
+
+			right = json.find("=");
+
+			JsonObj params;
+			while(right != std::string::npos)
+			{
+				std::string key(json.substr(left, right - left));
+
+				//提取[]内的成员
+				std::string::size_type keyLeft(0);
+				std::string::size_type keyRight(key.find("%5B"));
+
+				JsonObj* curParam(&params[key.substr(keyLeft, keyRight)]);
+
+				while(keyRight != std::string::npos)
+				{
+					keyLeft = keyRight + 3;
+					keyRight = key.find("%5D", keyLeft);
+
+					const std::string attr(key.substr(keyLeft, keyRight - keyLeft));
+
+					if(attr != "")
+						curParam = &(*curParam)[attr];
+					else
+					{
+						curParam->Push("");
+						curParam = &(*curParam)[curParam->GetArraySize() - 1];
+					}
+
+					keyLeft = keyRight + 3;
+					keyRight = key.find("%5B", keyLeft);
+				}
+			
+
+				left = right + 1;
+				right = json.find("&", left);
+				std::string value(web::UrlDecode(json.substr(left, right - left)));
+
+				*curParam = value;
+
+				if(right == std::string::npos)
+					break;
+
+				left = right + 1;
+				right = json.find("=", left);
+			}
+
+			return params;
+		}
+
+		static void ParseJson(JsonObj& curJson, std::string _json)
+		{
+			static std::unordered_map<char, char> special =
+			{
+				{'{', '}'},
+				{'[', ']'},
+				{'"', '"'},
+			};
+
+			std::string::size_type pos(0);
+
+			pos = _json.find_first_not_of(' ');
+			auto iter = special.find(_json[pos]);
+			if(iter == special.end())
+			{
+				curJson = std::stod(_json);
+				return;
+			}
+
+			do
+			{
+				switch(iter->first)
+				{
+					case '"':
+					{
+						curJson = _json.substr(pos + 1, _json.find('"', pos + 1) - (pos + 1));
+						return;
+						break;
+					}
+					case '{':
+					{
+						std::string::size_type left(_json.find('"', pos) + 1);
+						std::string::size_type right(_json.find('"', left + 1));
+
+						const std::string key = _json.substr(left, right - left);
+
+						left = _json.find(':', right + 1);
+						left = _json.find_first_not_of(' ', left + 1);
+
+						auto endChar = special.find(_json[left]);
+						if(endChar != special.end())
+							right = _json.find(endChar->second, left + 1) + 1;
+						else
+							right = _json.find(",", left + 1);
+
+						const std::string value = _json.substr(left, right - left);
+
+						//std::cout << "key:" << key << " value:" << value << std::endl;
+						ParseJson(curJson[key], value);
+
+						break;
+					}
+					case '[':
+					{
+						const std::string value = _json.substr(pos + 1, _json.find(']', pos + 1) - (pos + 1));
+						std::string::size_type leftTemp(0);
+						std::string::size_type rightTemp(std::string::npos);
+					
+						do
+						{	
+							auto endChar = special.find(value[leftTemp]);
+							rightTemp = value.find(endChar->second, leftTemp + 1); 
+							rightTemp = value.find(",", rightTemp + 1);
+							const std::string arrayValue = value.substr(leftTemp, rightTemp - leftTemp);
+
+							//std::cout << "[] value:" << arrayValue<< std::endl;
+							curJson.Push("");
+							JsonObj::ParseJson(curJson[curJson.GetArraySize() - 1], arrayValue);
+
+							leftTemp = value.find_first_not_of(' ', rightTemp + 1);
+						} while(rightTemp != std::string::npos);
+						break;
+					}
+				}
+
+
+				pos = _json.find(',', pos + 1);
+			} while(pos != std::string::npos);
+		}
+
+		static JsonObj ParseJson(std::string _json)
+		{
+			JsonObj result;
+
+			ParseJson(result, _json);
+			
+			return result;
+		}
+
 		JsonObj& operator[](std::string _key)
 		{
 			auto iter = this->attrs.find(_key); 
 			if(iter == this->attrs.end())
 			{
-				iter = this->attrs.insert(std::pair<std::string, std::unique_ptr<JsonObj>>(_key, std::make_unique<JsonObj>())).first;
+				iter = this->attrs.insert(std::pair<std::string, std::unique_ptr<JsonObj>>(_key, std::move(std::make_unique<JsonObj>()))).first;
 			}
 
 			return *(iter->second);
+		}
+
+		const JsonObj& operator[](std::string _key) const
+		{
+			return *this->attrs.at(_key).get();
+		}
+
+		JsonObj& operator[](int _index)
+		{
+			auto& obj = this->arr->at(_index); 
+
+			return *obj.get();
+		}
+
+		const JsonObj& operator[](int _index) const
+		{
+			return *this->arr->at(_index).get();
 		}
 
 		JsonObj& operator=(const char* _value)
 		{
 			this->DataValid();
 			this->val = std::string("\"") + std::string(_value) + "\"";
+			this->valType = JsonType::STRING;
 
 			return *this;
 		}
@@ -179,6 +384,7 @@ namespace web
 		{
 			this->DataValid();
 			this->val = std::string("\"") + std::string(_value) + "\"";
+			this->valType = JsonType::STRING;
 			                                                            
 			return *this;
 		}
@@ -187,6 +393,7 @@ namespace web
 		{
 			this->DataValid();
 			this->val = std::to_string(_value);
+			this->valType = JsonType::NUMBER;
 		                                            
 			return *this;
 		}
@@ -195,6 +402,7 @@ namespace web
 		{
 			this->DataValid();
 			this->val = std::to_string(_value);
+			this->valType = JsonType::NUMBER;
 
 			return *this;
 		}
@@ -203,6 +411,7 @@ namespace web
 		{
 			this->DataValid();
 			this->val = std::to_string(_value);
+			this->valType = JsonType::NUMBER;
 
 			return *this;
 		}
@@ -218,21 +427,24 @@ namespace web
 			{
 				this->val = "false";
 			}
+			this->valType = JsonType::BOOL;
 
 			return *this;
 		}
 
-		JsonObj& operator=(const JsonObj& _obj)
-		{
-			this->val = _obj.ToJson();
+		//JsonObj& operator=(const JsonObj& _obj)
+		//{
+		//	this->val = _obj.ToJson();
+		//	this->valType = JsonType::JSON;
 
-			return *this;
-		}
+		//	return *this;
+		//}
 
 		void SetNull()
 		{
 			this->DataValid();
 			this->val = "null";
+			this->valType = JsonType::NULLVAL;
 		}
 
 		template<typename T>
@@ -245,11 +457,33 @@ namespace web
 
 			this->arr->push_back(std::make_unique<JsonObj>());
 			*this->arr->back() = _value;
+			this->valType = JsonType::ARRAY;
 		}
 
 		void Push(const JsonObj& _obj)
 		{
 			this->Push<const JsonObj&>(_obj);
+		}
+
+		size_t GetArraySize() const
+		{
+			return this->arr->size();
+		}
+
+		std::string ToString() const
+		{
+			if(this->valType != JsonType::STRING)
+				return "";
+
+			return this->val->substr(1,this->val->size() - 2);
+		}
+
+		double ToDouble() const
+		{
+			if(this->valType != JsonType::NUMBER)
+				return std::numeric_limits<double>::infinity();
+
+			return std::stod(this->val.value());
 		}
 
 		std::string ToJson() const
@@ -288,7 +522,9 @@ namespace web
 				return res;
 			}
 		}
-	};	
+	};
+
+	using UrlParam = JsonObj;
 
 	class HttpAttr
 	{
@@ -318,7 +554,6 @@ namespace web
 	class HttpHeader
 	{
 	private:
-		std::string url;
 		size_t contentLength;
 
 		std::unordered_map<std::string, HttpAttr> attrs;
@@ -390,16 +625,31 @@ namespace web
 		}
 
 	public:
-		HttpHeader(std::string_view _headerStr):
-			attrs(this->ReadAttr(_headerStr)),
-			contentLength(0),
-			url("")
+		//传递Http头属性开始即首行的路径地址或状态码下一行开始
+		HttpHeader(std::string_view _attrStr):
+			attrs(this->ReadAttr(_attrStr)),
+			contentLength(0)
 		{
 			const std::string temp = this->GetAttrValue(this->attrs, "Content-Length");
 			if(!temp.empty())
 				this->contentLength = std::stoll(temp);
 
 
+			this->ReadCookie(this->GetAttrValue(this->attrs, "Cookie"));
+		}
+
+		HttpHeader(const std::vector<HttpAttr>& _attrs):
+			contentLength(0)
+		{
+			for(const auto& item: _attrs)
+			{
+				this->attrs.insert(std::pair<std::string, HttpAttr>(item.GetKey(), item));
+			}
+
+			const std::string temp = this->GetAttrValue(this->attrs, "Content-Length");
+			if(!temp.empty())
+				this->contentLength = std::stoll(temp);
+			
 			this->ReadCookie(this->GetAttrValue(this->attrs, "Cookie"));
 		}
 
@@ -462,6 +712,7 @@ namespace web
 		//请求类型(例:get post)
 		std::string type;
 		std::string url;
+		std::string queryString;
 		std::string version;
 		std::optional<HttpHeader> header;
 		std::vector<char> body;
@@ -496,10 +747,11 @@ namespace web
 			this->url = line.substr(left, right - left);
 			left = right + 1;
 			//去掉地址?开头的参数
-			right = this->url.find("?", left);
+			right = this->url.find("?");
 			if(right != std::string::npos)
 			{
-				this->url = line.substr(left, right - left);
+				this->queryString = this->url.substr(right + 1);
+				this->url = this->url.substr(0, right);
 			}
 	
 
@@ -541,6 +793,17 @@ namespace web
 			this->ReadBody(pos + 4, bodyLen);
 		}
 
+		HttpRequest(std::string _type, std::string _url, std::vector<HttpAttr> _attrs, std::vector<char> _body):
+			type(_type),
+			url(_url.substr(0, _url.find("?"))),
+			queryString(_url.substr(_url.find("?") + 1)),
+			version("HTTP/1.1"),
+			header(HttpHeader(std::move(_attrs))),
+			body(std::move(_body))
+		{
+			
+		}
+
 		const std::string& GetType() const
 		{
 			return this->type;
@@ -551,6 +814,11 @@ namespace web
 			return this->url;
 		}
 
+		const std::string& GetQueryString() const
+		{
+			return this->queryString;
+		}
+		
 		const char* GetBody() const
 		{
 			return this->body.data();
@@ -1600,62 +1868,6 @@ namespace web
 			return result;
 		}
 
-		static UrlParam JsonToUrlParam(const char* _body, size_t _len)
-		{
-			std::string json(_body, _len);
-
-			std::string::size_type left(0);
-			std::string::size_type right(0);
-
-			right = json.find("=");
-
-			UrlParam params;
-			while(right != std::string::npos)
-			{
-				std::string key(json.substr(left, right - left));
-
-				//提取[]内的成员
-				std::string::size_type keyLeft(0);
-				std::string::size_type keyRight(key.find("%5B"));
-
-				UrlParam* curParam(&params[key.substr(keyLeft, keyRight)]);
-
-				while(keyRight != std::string::npos)
-				{
-					keyLeft = keyRight + 3;
-					keyRight = key.find("%5D", keyLeft);
-
-					const std::string attr(key.substr(keyLeft, keyRight - keyLeft));
-
-					if(attr != "")
-						curParam = &(*curParam)[attr];
-					else
-					{
-						curParam->PushBack("");
-						curParam = &(*curParam)[curParam->GetArraySize() - 1];
-					}
-
-					keyLeft = keyRight + 3;
-					keyRight = key.find("%5B", keyLeft);
-				}
-			
-
-				left = right + 1;
-				right = json.find("&", left);
-				std::string value(web::UrlDecode(json.substr(left, right - left)));
-
-				*curParam = value;
-
-				if(right == std::string::npos)
-					break;
-
-				left = right + 1;
-				right = json.find("=", left);
-			}
-
-			return params;
-		}
-
 		static std::vector<char> GetRootFile(std::string_view _view)
 		{
 			const std::string root = "wwwroot/";
@@ -1947,6 +2159,7 @@ namespace web
 								}
 								else
 								{
+									//错误回调
 									std::function<void(std::string_view, std::string_view, ISocket*)> logError = 
 									[](std::string_view _url, std::string_view _error, ISocket* _socket)
 									{
@@ -1960,7 +2173,11 @@ namespace web
 
 									if(_httpServer->router->FindUrlCallback(request.GetType(), request.GetUrl()))
 									{
-										const UrlParam params(HttpServer::JsonToUrlParam(request.GetBody(), request.GetBodyLen()));
+										UrlParam params;
+										if(request.GetType() == "POST")
+											params = std::move(JsonObj::ParseFormData(std::string(request.GetBody(), request.GetBodyLen())));
+										else if(request.GetType() == "GET")
+											params = std::move(JsonObj::ParseFormData(request.GetQueryString()));
 
 										try
 										{
@@ -2134,13 +2351,23 @@ namespace web
 			}
 		}
 
-		HttpResponse SendRequest(std::string_view _type, std::string_view _path)
+		HttpResponse SendRequest(std::string _type, std::string _path, const char* _body = nullptr, size_t _bodySize = 0)
 		{
-			const std::string content = std::string(_type) + " " + std::string(_path) + " HTTP/1.1\r\n"
+			const std::string content = _type + " " + _path + " HTTP/1.1\r\n"
 						"Accept-Encoding: identity\r\n"
 						"Host: " + this->ip + ":" + std::to_string(this->port) + "\r\n"
 						"\r\n";
-			HttpRequest request(content.data());
+			//HttpRequest request(content.data());
+			
+			const std::vector<HttpAttr> attrs = 
+			{
+				{"Accept-Encoding", "identity"},
+				{"Host", this->ip + ":" + std::to_string(this->port)}
+			};
+		
+			std::vector<char> body(_body, _body + _bodySize);	
+
+			HttpRequest request(_type, _path, attrs, std::move(body));
 		
 			web::SendHttpRequest(&this->sock, request);
 

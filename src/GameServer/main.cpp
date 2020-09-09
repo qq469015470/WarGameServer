@@ -11,7 +11,7 @@
 class Chat
 {
 private:
-	UserService userService;
+	web::HttpClient userServerClient;
 
 	struct UserData
 	{
@@ -52,19 +52,22 @@ private:
 		return args;
 	}
 
-	inline void Login(std::string_view _token, web::Websocket* _websocket)
+	inline void Login(std::string _token, web::Websocket* _websocket)
 	{
 		std::lock_guard<std::mutex> lg(this->loginMtx);
 		this->isLoging = true;
 
-		auto user = this->userService.GetUser(_token.data());
+		const web::HttpResponse response = this->userServerClient.SendRequest("GET", std::string("/UserInfo?token=" + _token));
+		const std::string body = std::string(response.GetBody(), response.GetBodySize());
 
-		if(!user.has_value())
+		if(body.find("error") != std::string::npos)
 		{
 			_websocket->SendText("error:token failed!");
 		}
 		else
 		{
+			web::JsonObj jsonObj(web::JsonObj::ParseFormData(body));
+
 			if(this->userMap.find(_token.data()) != this->userMap.end())
 			{
 				_websocket->SendText("error:repeat login!");
@@ -73,7 +76,11 @@ private:
 			{
 				UserData temp;
 
-				temp.user = std::move(*user);
+				User user;
+
+				user.name = jsonObj["name"].ToString();
+
+				temp.user = std::move(user);
 				temp.token = std::string(_token);
 				temp.websocket = _websocket;
 				temp.snake = nullptr;
