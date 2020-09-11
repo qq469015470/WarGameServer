@@ -11,8 +11,6 @@
 class Chat
 {
 private:
-	web::HttpClient userServerClient;
-
 	struct UserData
 	{
 		User user;
@@ -33,7 +31,6 @@ private:
 	std::mutex loginMtx;
 	std::condition_variable loginCV;
 	bool isLoging;
-
 
 	static std::vector<std::string> GetArgs(const std::string& _cmd)
 	{
@@ -57,7 +54,11 @@ private:
 		std::lock_guard<std::mutex> lg(this->loginMtx);
 		this->isLoging = true;
 
-		const web::HttpResponse response = this->userServerClient.SendRequest("GET", std::string("/UserInfo?token=" + _token));
+		web::HttpClient userServerClient;
+		
+		userServerClient.Connect("192.168.1.105", 9999);
+
+		const web::HttpResponse response = userServerClient.SendRequest("GET", std::string("/UserInfo?token=" + _token));
 		const std::string body = std::string(response.GetBody(), response.GetBodySize());
 
 		if(body.find("error") != std::string::npos)
@@ -66,7 +67,7 @@ private:
 		}
 		else
 		{
-			web::JsonObj jsonObj(web::JsonObj::ParseFormData(body));
+			web::JsonObj jsonObj(web::JsonObj::ParseJson(body));
 
 			if(this->userMap.find(_token.data()) != this->userMap.end())
 			{
@@ -203,7 +204,6 @@ public:
 	Chat():
 		isLoging(false)
 	{
-
 	}
 
 	void SendAddItem(const IItem* _item)
@@ -342,7 +342,7 @@ public:
 	}
 };
 
-void GameLoop(GameScene& _scene, Chat& _chat)
+void GameLoop(GameScene& _scene, Chat& _chat, web::HttpServer& _server)
 {
 	using TYPE = std::remove_reference<decltype(_chat)>::type; 
 	                                                                                                              
@@ -352,9 +352,16 @@ void GameLoop(GameScene& _scene, Chat& _chat)
 	_scene.SetItemNotifity(itemAdd, itemRemove);
 
 	std::chrono::steady_clock::time_point past(std::chrono::steady_clock::now());
+	//没有人3s后房间退出
+	float timeout(3.0f);
 	while(true)
 	{
+		auto now = std::chrono::steady_clock::now();
+		auto timespan = std::chrono::duration_cast<std::chrono::milliseconds>(now - past);
 
+		constexpr float deltaTime = 1.0f / 32.0f;
+		constexpr float deltaTimeMills = deltaTime * 1000;
+		
 		while(_chat.NeedInitClient())
 		{
 			_chat.InitClient(_scene.AddSnake(0), _scene.GetItems());
@@ -364,14 +371,20 @@ void GameLoop(GameScene& _scene, Chat& _chat)
 			_scene.RemoveSnake(_chat.ClearClient());
 		}
 
-		auto now = std::chrono::steady_clock::now();
-		auto timespan = std::chrono::duration_cast<std::chrono::milliseconds>(now - past);
-
-		constexpr float deltaTime = 1.0f / 32.0f;
-		constexpr float deltaTimeMills = deltaTime * 1000;
-
 		if(timespan.count() < deltaTimeMills || timespan.count() == 0)
 			continue;
+
+		//没有蛇则累计超时时间
+		//否则重置
+		if(_scene.GetSnakes().size() != 0)
+			timeout = 2.0f;
+		else
+		{	
+			timeout -= timespan.count() / 1000.0f;
+			//超时则退出程序
+			if(timeout <= 0)
+				break;
+		}
 
 		past = now;
 
@@ -390,17 +403,12 @@ void GameLoop(GameScene& _scene, Chat& _chat)
 			_chat.SendGameInfo(_scene.GetSnakes());	
 		}
 	}
+	_server.Stop();
 }
 
-void ListenProc(Chat& _chat, const char* _ip, const int _port)
+void ListenProc(web::HttpServer& _server, const char* _ip, const int _port)
 {
-	std::unique_ptr<web::Router> router(new web::Router());
-
-	router->RegisterWebsocket("/chat", &Chat::OnConnect, &Chat::OnMessage, &Chat::OnDisconnect, &_chat);
-
-	web::HttpServer server(std::move(router));
-
-	server.Listen(_ip, _port);
+	_server.Listen(_ip, _port);
 }
 
 int main(int _argc, char** _args)
@@ -416,9 +424,15 @@ int main(int _argc, char** _args)
 	Chat chat;
 	GameScene scene;
 
-	std::thread serverProc(::ListenProc, std::ref(chat), _args[1], std::atoi(_args[2]));
+	std::unique_ptr<web::Router> router(new web::Router());
 
-	::GameLoop(scene, chat);
+	router->RegisterWebsocket("/chat", &Chat::OnConnect, &Chat::OnMessage, &Chat::OnDisconnect, &chat);
+
+	web::HttpServer server(std::move(router));
+
+	std::thread serverProc(::ListenProc, std::ref(server), _args[1], std::atoi(_args[2]));
+
+	::GameLoop(scene, chat, server);
 
 	serverProc.join();
 

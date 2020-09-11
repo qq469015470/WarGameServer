@@ -23,6 +23,7 @@
 #include <unistd.h>
 #include <thread>
 #include <functional>
+#include <sys/eventfd.h>
 
 #include <openssl/ssl.h>
 #include <openssl/sha.h>
@@ -159,100 +160,12 @@ namespace web
 		std::optional<std::string> val;
 		std::optional<std::vector<std::unique_ptr<JsonObj>>> arr;
 
-		void DataValid()
-		{
-			if(this->val.has_value() && this->arr.has_value())
-			{
-				throw std::logic_error("can not set value both arr and value");
-			}
-		}
+		//JsonObj& operator=(const JsonObj& _jsonObj)
+		//{
+		//	for(const auto& item	
 
-		JsonObj& operator=(const JsonObj& _jsonObj)
-		{
-			return *this;
-		}
-
-
-
-	public:
-		JsonObj():
-			valType(JsonType::NULLVAL)
-		{
-
-		}
-
-		JsonObj(JsonObj&& _obj):
-			attrs(std::move(_obj.attrs)),
-			valType(std::move(_obj.valType)),
-			val(std::move(_obj.val)),
-			arr(std::move(_obj.arr))
-		{
-		}
-
-		JsonObj& operator=(JsonObj&& _obj)
-		{
-			this->attrs = std::move(_obj.attrs);
-			this->valType = std::move(_obj.valType);
-			this->val = std::move(_obj.val);
-			this->arr = std::move(_obj.arr);
-			return *this;
-		}
-
-		static JsonObj ParseFormData(std::string _formData)
-		{
-			const std::string& json = _formData;
-
-			std::string::size_type left(0);
-			std::string::size_type right(0);
-
-			right = json.find("=");
-
-			JsonObj params;
-			while(right != std::string::npos)
-			{
-				std::string key(json.substr(left, right - left));
-
-				//提取[]内的成员
-				std::string::size_type keyLeft(0);
-				std::string::size_type keyRight(key.find("%5B"));
-
-				JsonObj* curParam(&params[key.substr(keyLeft, keyRight)]);
-
-				while(keyRight != std::string::npos)
-				{
-					keyLeft = keyRight + 3;
-					keyRight = key.find("%5D", keyLeft);
-
-					const std::string attr(key.substr(keyLeft, keyRight - keyLeft));
-
-					if(attr != "")
-						curParam = &(*curParam)[attr];
-					else
-					{
-						curParam->Push("");
-						curParam = &(*curParam)[curParam->GetArraySize() - 1];
-					}
-
-					keyLeft = keyRight + 3;
-					keyRight = key.find("%5B", keyLeft);
-				}
-			
-
-				left = right + 1;
-				right = json.find("&", left);
-				std::string value(web::UrlDecode(json.substr(left, right - left)));
-
-				*curParam = value;
-
-				if(right == std::string::npos)
-					break;
-
-				left = right + 1;
-				right = json.find("=", left);
-			}
-
-			return params;
-		}
+		//	return *this;
+		//}
 
 		static void ParseJson(JsonObj& curJson, std::string _json)
 		{
@@ -334,6 +247,89 @@ namespace web
 			} while(pos != std::string::npos);
 		}
 
+	public:
+		JsonObj():
+			valType(JsonType::NULLVAL)
+		{
+			this->SetNull();
+		}
+
+		JsonObj(JsonObj&& _obj):
+			attrs(std::move(_obj.attrs)),
+			valType(std::move(_obj.valType)),
+			val(std::move(_obj.val)),
+			arr(std::move(_obj.arr))
+		{
+			_obj.SetNull();
+		}
+
+		JsonObj& operator=(JsonObj&& _obj)
+		{
+			this->attrs = std::move(_obj.attrs);
+			this->valType = std::move(_obj.valType);
+			this->val = std::move(_obj.val);
+			this->arr = std::move(_obj.arr);
+
+			_obj.SetNull();
+			return *this;
+		}
+
+		static JsonObj ParseFormData(std::string _formData)
+		{
+			const std::string& json = _formData;
+
+			std::string::size_type left(0);
+			std::string::size_type right(0);
+
+			right = json.find("=");
+
+			JsonObj params;
+			while(right != std::string::npos)
+			{
+				std::string key(json.substr(left, right - left));
+
+				//提取[]内的成员
+				std::string::size_type keyLeft(0);
+				std::string::size_type keyRight(key.find("%5B"));
+
+				JsonObj* curParam(&params[key.substr(keyLeft, keyRight)]);
+
+				while(keyRight != std::string::npos)
+				{
+					keyLeft = keyRight + 3;
+					keyRight = key.find("%5D", keyLeft);
+
+					const std::string attr(key.substr(keyLeft, keyRight - keyLeft));
+
+					if(attr != "")
+						curParam = &(*curParam)[attr];
+					else
+					{
+						curParam->Push("");
+						curParam = &(*curParam)[curParam->GetArraySize() - 1];
+					}
+
+					keyLeft = keyRight + 3;
+					keyRight = key.find("%5B", keyLeft);
+				}
+			
+
+				left = right + 1;
+				right = json.find("&", left);
+				std::string value(web::UrlDecode(json.substr(left, right - left)));
+
+				*curParam = value;
+
+				if(right == std::string::npos)
+					break;
+
+				left = right + 1;
+				right = json.find("=", left);
+			}
+
+			return params;
+		}
+
 		static JsonObj ParseJson(std::string _json)
 		{
 			JsonObj result;
@@ -345,6 +341,7 @@ namespace web
 
 		JsonObj& operator[](std::string _key)
 		{
+			this->val.reset();
 			auto iter = this->attrs.find(_key); 
 			if(iter == this->attrs.end())
 			{
@@ -361,6 +358,7 @@ namespace web
 
 		JsonObj& operator[](int _index)
 		{
+			this->val.reset();
 			auto& obj = this->arr->at(_index); 
 
 			return *obj.get();
@@ -373,7 +371,9 @@ namespace web
 
 		JsonObj& operator=(const char* _value)
 		{
-			this->DataValid();
+			this->attrs.clear();
+			this->arr.reset();
+
 			this->val = std::string("\"") + std::string(_value) + "\"";
 			this->valType = JsonType::STRING;
 
@@ -382,7 +382,9 @@ namespace web
 
 		JsonObj& operator=(std::string_view _value)
 		{
-			this->DataValid();
+			this->attrs.clear();
+			this->arr.reset();
+
 			this->val = std::string("\"") + std::string(_value) + "\"";
 			this->valType = JsonType::STRING;
 			                                                            
@@ -391,7 +393,9 @@ namespace web
 
 		JsonObj& operator=(int _value)
 		{
-			this->DataValid();
+			this->attrs.clear();
+			this->arr.reset();
+
 			this->val = std::to_string(_value);
 			this->valType = JsonType::NUMBER;
 		                                            
@@ -400,7 +404,9 @@ namespace web
 
 		JsonObj& operator=(int64_t _value)
 		{
-			this->DataValid();
+			this->attrs.clear();
+			this->arr.reset();
+
 			this->val = std::to_string(_value);
 			this->valType = JsonType::NUMBER;
 
@@ -409,7 +415,9 @@ namespace web
 
 		JsonObj& operator=(double _value)
 		{
-			this->DataValid();
+			this->attrs.clear();
+			this->arr.reset();
+
 			this->val = std::to_string(_value);
 			this->valType = JsonType::NUMBER;
 
@@ -417,8 +425,10 @@ namespace web
 		}
 		
 		JsonObj& operator=(bool _value)
-		{
-			this->DataValid();
+		{	
+			this->attrs.clear();
+			this->arr.reset();
+
 			if(_value == true)
 			{
 				this->val = "true";
@@ -442,7 +452,9 @@ namespace web
 
 		void SetNull()
 		{
-			this->DataValid();
+			this->attrs.clear();
+			this->arr.reset();
+			
 			this->val = "null";
 			this->valType = JsonType::NULLVAL;
 		}
@@ -450,7 +462,8 @@ namespace web
 		template<typename T>
 		void Push(T _value)
 		{
-			this->DataValid();
+			this->attrs.clear();
+			this->val.reset();
 			
 			if(!this->arr.has_value())
 				this->arr = std::vector<std::unique_ptr<JsonObj>>{};
@@ -460,9 +473,17 @@ namespace web
 			this->valType = JsonType::ARRAY;
 		}
 
-		void Push(const JsonObj& _obj)
+		void Push(JsonObj&& _obj)
 		{
-			this->Push<const JsonObj&>(_obj);
+			this->attrs.clear();
+			this->val.reset();
+			
+			if(!this->arr.has_value())
+				this->arr = std::vector<std::unique_ptr<JsonObj>>{};
+
+			this->arr->push_back(std::make_unique<JsonObj>());
+			*this->arr->back() = std::move(_obj);
+			this->valType = JsonType::ARRAY;
 		}
 
 		size_t GetArraySize() const
@@ -488,10 +509,10 @@ namespace web
 
 		std::string ToJson() const
 		{
-			if(!this->val.has_value() && !this->arr.has_value() && this->attrs.size() == 0)
-			{
-				return "{}";
-			}
+			//if(!this->val.has_value() && !this->arr.has_value() && this->attrs.size() == 0)
+			//{
+			//	return "{}";
+			//}
 
 			if(this->val.has_value())
 			{
@@ -795,13 +816,18 @@ namespace web
 
 		HttpRequest(std::string _type, std::string _url, std::vector<HttpAttr> _attrs, std::vector<char> _body):
 			type(_type),
-			url(_url.substr(0, _url.find("?"))),
-			queryString(_url.substr(_url.find("?") + 1)),
+			url(_url),
+			queryString(""),
 			version("HTTP/1.1"),
 			header(HttpHeader(std::move(_attrs))),
 			body(std::move(_body))
 		{
-			
+			std::string::size_type pos = url.find("?");
+			if(pos != std::string::npos)
+			{
+				this->queryString = this->url.substr(pos + 1);
+				this->url = this->url.substr(0, pos);
+			}
 		}
 
 		const std::string& GetType() const
@@ -1648,7 +1674,11 @@ namespace web
 			std::string temp;
 
 			temp += _request.GetType() + " ";
-			temp += _request.GetUrl() + " ";
+			temp += _request.GetUrl();
+		       	if(_request.GetQueryString() != "")
+				temp += "?" + _request.GetQueryString();
+
+			temp += " ";
 			temp += "HTTP/1.1\r\n";
 			
 			for(const auto& item: _request.GetHeader().GetHttpAttrs())
@@ -1677,6 +1707,7 @@ namespace web
 		bool useSSL;
 		bool listenSignal;
 		Socket serverSock;
+		int epfd;
 
 		//返回websocket的Sec-Websocket-Accept码
 		//https://www.zhihu.com/question/67784701
@@ -1951,7 +1982,7 @@ namespace web
 			}
 			
 			epoll_event events[max];
-			const int epfd = epoll_create(max);
+			this->epfd = epoll_create(max);
 		
 			if(epfd == -1)
 			{
@@ -2038,7 +2069,12 @@ namespace web
 
 			while(_httpServer->listenSignal == true)
 			{
-				int nfds = epoll_wait(epfd, events, max, -1);
+				const int nfds = epoll_wait(epfd, events, max, -1);
+
+				//防止eventfd触发信号时导致程序出现问题
+				//判断Server是否已经Stop
+				if(_httpServer->listenSignal == false)
+					break;
 		
 				if(nfds == -1)
 				{
@@ -2258,7 +2294,9 @@ namespace web
 		HttpServer(std::unique_ptr<Router>&& _router):
 			router(std::move(_router)),
 			useSSL(false),
-			serverSock(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+			listenSignal(false),
+			serverSock(AF_INET, SOCK_STREAM, IPPROTO_TCP),
+			epfd(-1)
 		{
 			this->InitSSL();
 
@@ -2280,6 +2318,11 @@ namespace web
 
 		HttpServer& Listen(std::string_view _address, int _port)
 		{
+			if(this->listenSignal == true)
+			{
+				throw std::logic_error("server is listening.");
+			}
+
 			this->listenSignal = true;
 			sockaddr_in serverAddr = {};
 
@@ -2301,6 +2344,22 @@ namespace web
 			}
 
 			this->listenSignal = false;
+
+			const int sfd = eventfd(1, EFD_CLOEXEC); 
+			if(sfd == -1)
+				throw std::runtime_error("signalfd failed");
+			
+			epoll_event event;
+    			event.data.fd = sfd;
+    			event.events = EPOLLIN;
+    			if(epoll_ctl(this->epfd, EPOLL_CTL_ADD, sfd, &event) == -1)
+				throw std::runtime_error("epoll ctl failed");
+
+			if(close(this->epfd) != 0)
+				throw std::runtime_error("close epfd failed!");
+
+			if(close(sfd) != 0)
+				throw std::runtime_error("close eventfd failed!");
 
 			return *this;
 		}

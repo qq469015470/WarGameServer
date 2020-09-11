@@ -83,7 +83,7 @@ web::HttpResponse Register(const web::UrlParam& _params, const web::HttpHeader& 
 
 		userService.Register(_params["username"].ToString(), _params["password"].ToString());
 
-		return web::Json("ok");
+		return web::Json("注册成功!");
 	}
 	catch(std::logic_error _ex)
 	{

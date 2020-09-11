@@ -40,7 +40,7 @@ public:
 		const int port = this->ApplyPort();
 
 		//后台执行GameServer
-		std::string command("~/Project/WarGameServer/src/GameServer/build/bin/GameServer ");
+		std::string command("/home/administrator/Project/WarGameServer/build/src/GameServer/bin/GameServer ");
 		command += this->serverIp + " " + std::to_string(port) + " &";
 		const int result = system(command.c_str());
 		if(result != 0)

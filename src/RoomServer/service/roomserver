@@ -1,12 +1,12 @@
 #!/bin/bash
 #
-# 描述:该脚本用于启动UserServer服务
+# 描述:该脚本用于启动RoomServer服务
 
-SERVERNAME="userserver"
-DIR=/home/administrator/Project/WarGameServer/build/src/UserServer/bin
-PROG=./UserServer
+SERVERNAME="roomserver"
+DIR=/home/administrator/Project/WarGameServer/build/src/RoomServer/bin
+PROG=./RoomServer
 IP=0.0.0.0
-PORT=9999
+PORT=6500
 
 #start function
 start()
@@ -26,7 +26,7 @@ stop()
 
 case "$1" in
 start)
-    start
+    start 
     ;;
 stop)
     stop
