@@ -3,7 +3,7 @@
 # 描述:该脚本用于启动RoomServer服务
 
 SERVERNAME="roomserver"
-DIR=/home/administrator/Project/WarGameServer/build/src/RoomServer/bin
+DIR=/opt/RoomServer
 PROG=./RoomServer
 IP=0.0.0.0
 PORT=6500

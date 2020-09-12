@@ -52,10 +52,7 @@ target_link_libraries(GameCallServer PRIVATE ${CRYPTO})
 target_link_libraries(GameCallServer PRIVATE pthread)
 target_link_libraries(GameCallServer PRIVATE dl)
 
-# 复制ssl公钥密钥(证书)
-#file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/cert.key DESTINATION ${EXECUTABLE_OUTPUT_PATH})
-#file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/cert.pem DESTINATION ${EXECUTABLE_OUTPUT_PATH})
-
-# 复制动态库
-# set(LIB_PATH ${CMAKE_CURRENT_SOURCE_DIR}/../lib)
-# file(COPY ${LIB_PATH}/mongo-cxx-driver/lib/ DESTINATION ${EXECUTABLE_OUTPUT_PATH})
+# install 设置
+SET(CMAKE_INSTALL_PREFIX /opt/GameCallServer)
+install(TARGETS GameCallServer RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX})
+install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/service/gamecallserver DESTINATION /etc/init.d/)
