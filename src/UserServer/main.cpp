@@ -149,7 +149,7 @@ int main(int _argc, char** _args)
 		return -1;
 	}
 
-	std::unique_ptr<web::Router> router(new web::Router());
+	std::unique_ptr<web::Router> router(std::make_unique<web::Router>());
 	router->RegisterUrl("GET", "/", &::HomePage);
 	router->RegisterUrl("GET", "/UserInfo", &::UserInfo);
 
