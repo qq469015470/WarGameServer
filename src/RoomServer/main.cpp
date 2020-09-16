@@ -79,7 +79,7 @@ public:
 		web::HttpClient client;
 
 		//唤醒服务器地址
-		const char* callGameServerAddress = "192.168.1.105";
+		const char* callGameServerAddress = "127.0.0.1";
 		const int port = 7500;
 
 		client.Connect(callGameServerAddress, port);

@@ -56,7 +56,7 @@ private:
 
 		web::HttpClient userServerClient;
 		
-		userServerClient.Connect("192.168.1.105", 9999);
+		userServerClient.Connect("0.0.0.0", 9999);
 
 		const web::HttpResponse response = userServerClient.SendRequest("GET", std::string("/UserInfo?token=" + _token));
 		const std::string body = std::string(response.GetBody(), response.GetBodySize());
