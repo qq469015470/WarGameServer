@@ -17,11 +17,78 @@
 
 # CMake版本需求
 
-  该项目使用CMake管理，最低版本需要3.18
+  *注意：该项目使用CMake管理，最低版本需要3.18*
   
 # 引用的库
+  *注意：以下库不需要再另外下载，该项目已将第三方库包含在src/include及src/lib下*
   ## OpenSSL
   https://github.com/openssl/openssl 用于加密Https通讯
   
   ## mongo-cxx-driver
   http://mongocxx.org/mongocxx-v3/installation/ mongodb数据库驱动库，用于与mongodb数据库通讯
+
+  ## glm
+  https://github.com/g-truc/glm 数学库用于数学运算
+  
+# 编译安装
+
+  ## 编译
+  进入到目录下执行以下命令<br>
+  mkdir build<br>
+  cd build<br>
+  cmake ..<br>
+  make && make install<br>
+  
+  ## 配置nginx
+  因为是分布式设计，RoomServer会固定请求7500端口，可以在GameCallServer的 upstream 添加多个GameCallServer ip地址
+  ```
+        ##
+        #GameCallServer
+        ##
+        upstream GameCallServer {
+			##可添加多个GameCallServer地址
+                server localhost:7510;
+        }
+
+        server {
+                listen 7500;
+                server_name localhost;
+                location / {
+                        proxy_pass http://GameCallServer/;
+                }
+        }
+        ##
+
+        ##
+        #GameServer
+        ##
+        server {
+                listen 15000;
+                server_name localhost;
+                #rewrite ^/(.*) http://$arg_ip:$arg_port?;
+                #rewrite ^/(.*) http://$arg_ip?;
+                # 转发websocket需要的设置
+                proxy_set_header X-Real_IP $remote_addr;
+                proxy_set_header Host $host;
+                proxy_set_header X_Forward_For $proxy_add_x_forwarded_for;
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection 'upgrade';
+
+                location / {
+                        proxy_pass http://$arg_ip/chat;
+                }
+        }
+        ##
+  ```
+
+  ## 运行
+  make install 后会在Linux /opt文件夹生成 WebServer, GameServer, GameCallServer, GameServer, RoomServer,  这些文件皆为多个服务器的执行文件夹。<br>
+  还会将服务器启动脚本生成于 /etc/init.d/ 下。<br>
+  所以调用服务命令即可
+  ```
+  sudo service webserver start
+  sudo service userserver start
+  sudo service roomserver start
+  sudo service gamecallserver start
+  ```
