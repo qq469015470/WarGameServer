@@ -31,6 +31,8 @@
   https://github.com/g-truc/glm 数学库用于数学运算
   
 # 编译安装
+  ## 安装 Mongodb 数据库
+  https://docs.mongodb.com/manual/administration/install-on-linux/
 
   ## 编译
   进入到目录下执行以下命令<br>
