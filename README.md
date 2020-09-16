@@ -35,11 +35,13 @@
   https://docs.mongodb.com/manual/administration/install-on-linux/
 
   ## 编译
-  进入到目录下执行以下命令<br>
-  mkdir build<br>
-  cd build<br>
-  cmake ..<br>
-  make && make install<br>
+  进入到目录下执行以下命令:
+  ```
+  mkdir build
+  cd build
+  cmake ..
+  make && make install
+  ```
   
   ## 配置nginx
   因为是分布式设计，RoomServer会固定请求7500端口，可以在GameCallServer的 upstream 添加多个GameCallServer ip地址
