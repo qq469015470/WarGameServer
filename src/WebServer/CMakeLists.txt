@@ -28,11 +28,8 @@ target_include_directories(WebServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../incl
 target_link_directories(WebServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lib/openssl)
 
 # 引用的库文件名
-find_library(SSL NAMES libssl.a)
-find_library(CRYPTO NAMES libcrypto.a)
-
-target_link_libraries(WebServer PRIVATE ${SSL})
-target_link_libraries(WebServer PRIVATE ${CRYPTO})
+target_link_libraries(WebServer PRIVATE libssl.a)
+target_link_libraries(WebServer PRIVATE libcrypto.a)
 
 target_link_libraries(WebServer PRIVATE dl)
 target_link_libraries(WebServer PRIVATE pthread)

@@ -41,13 +41,13 @@ target_link_directories(GameCallServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../li
 target_link_directories(GameCallServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lib/openssl)
 
 # 查找库文件(可填入多个文件进行搜索 按顺序优先使用开头的文件(.a为静态库 .so为动态库)
-find_library(SSL NAMES libssl.a)
-find_library(CRYPTO NAMES libcrypto.a)
+#find_library(SSL NAMES libssl.a)
+#find_library(CRYPTO NAMES libcrypto.a)
 
 
 # 链接引用的库文件名(上面的库依赖下面库)
-target_link_libraries(GameCallServer PRIVATE ${SSL})
-target_link_libraries(GameCallServer PRIVATE ${CRYPTO})
+target_link_libraries(GameCallServer PRIVATE libssl.a)
+target_link_libraries(GameCallServer PRIVATE libcrypto.a)
 
 target_link_libraries(GameCallServer PRIVATE pthread)
 target_link_libraries(GameCallServer PRIVATE dl)

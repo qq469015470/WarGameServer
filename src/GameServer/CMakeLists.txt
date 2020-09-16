@@ -39,31 +39,23 @@ target_include_directories(GameServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../inc
 # 添加库文件搜索路径
 target_link_directories(GameServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lib/mongo-cxx-driver)
 target_link_directories(GameServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lib/openssl)
-
-# 查找库文件(可填入多个文件进行搜索 按顺序优先使用开头的文件(.a为静态库 .so为动态库)
-find_library(BSONC NAMES libbson-static-1.0.a)
-find_library(MONGOC NAMES libmongoc-static-1.0.a)
-find_library(BSONCXX NAMES libbsoncxx-static.a)
-find_library(MONGOCXX NAMES libmongocxx-static.a)
-find_library(SSL NAMES libssl.a)
-find_library(CRYPTO NAMES libcrypto.a)
-
+target_link_directories(GameServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lib)
 
 # 链接引用的库文件名(上面的库依赖下面库)
-target_link_libraries(GameServer PRIVATE ${MONGOCXX})
-target_link_libraries(GameServer PRIVATE ${BSONCXX})
-target_link_libraries(GameServer PRIVATE ${MONGOC})
-target_link_libraries(GameServer PRIVATE ${BSONC})
+target_link_libraries(GameServer PRIVATE libmongocxx-static.a)
+target_link_libraries(GameServer PRIVATE libbsoncxx-static.a)
+target_link_libraries(GameServer PRIVATE libmongoc-static-1.0.a)
+target_link_libraries(GameServer PRIVATE libbson-static-1.0.a)
 
-target_link_libraries(GameServer PRIVATE ${SSL})
-target_link_libraries(GameServer PRIVATE ${CRYPTO})
+target_link_libraries(GameServer PRIVATE libssl.a)
+target_link_libraries(GameServer PRIVATE libcrypto.a)
 
 target_link_libraries(GameServer PRIVATE pthread)
 target_link_libraries(GameServer PRIVATE dl)
 
 # mongoc driver库的依赖
 target_link_libraries(GameServer PRIVATE resolv)
-target_link_libraries(GameServer PRIVATE z)
+target_link_libraries(GameServer PRIVATE libz.a)
 target_link_libraries(GameServer PRIVATE rt)
 
 # 复制ssl公钥密钥(证书)

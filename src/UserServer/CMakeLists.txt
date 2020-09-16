@@ -29,29 +29,23 @@ target_include_directories(UserServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../inc
 # 添加库文件路径
 target_link_directories(UserServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lib/mongo-cxx-driver)
 target_link_directories(UserServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lib/openssl)
+target_link_directories(UserServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../lib)
 
 # 引用的库文件名
-find_library(BSONC NAMES libbson-static-1.0.a)
-find_library(MONGOC NAMES libmongoc-static-1.0.a)
-find_library(BSONCXX NAMES libbsoncxx-static.a)
-find_library(MONGOCXX NAMES libmongocxx-static.a)
-find_library(SSL NAMES libssl.a)
-find_library(CRYPTO NAMES libcrypto.a)
+target_link_libraries(UserServer PRIVATE libmongocxx-static.a)
+target_link_libraries(UserServer PRIVATE libbsoncxx-static.a)
+target_link_libraries(UserServer PRIVATE libmongoc-static-1.0.a)
+target_link_libraries(UserServer PRIVATE libbson-static-1.0.a)
 
-target_link_libraries(UserServer PRIVATE ${MONGOCXX})
-target_link_libraries(UserServer PRIVATE ${BSONCXX})
-target_link_libraries(UserServer PRIVATE ${MONGOC})
-target_link_libraries(UserServer PRIVATE ${BSONC})
-
-target_link_libraries(UserServer PRIVATE ${SSL})
-target_link_libraries(UserServer PRIVATE ${CRYPTO})
+target_link_libraries(UserServer PRIVATE libssl.a)
+target_link_libraries(UserServer PRIVATE libcrypto.a)
 
 target_link_libraries(UserServer PRIVATE dl)
 target_link_libraries(UserServer PRIVATE pthread)
 
 # mongoc driver库的依赖
 target_link_libraries(UserServer PRIVATE resolv)
-target_link_libraries(UserServer PRIVATE z)
+target_link_libraries(UserServer PRIVATE libz.a)
 target_link_libraries(UserServer PRIVATE rt)
 
 # 复制ssl公钥密钥(证书)
@@ -65,6 +59,6 @@ SET(CMAKE_INSTALL_PREFIX /opt/UserServer)
 install(TARGETS UserServer RUNTIME DESTINATION ${CMAKE_INSTALL_PREFIX})
 install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/service/userserver DESTINATION /etc/init.d/)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/cert.key DESTINATION ${CMAKE_INSTALL_PREFIX})
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/cert.pem DESTINATION {CMAKE_INSTALL_PREFIX})
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/cert.pem DESTINATION ${CMAKE_INSTALL_PREFIX})
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/wwwroot DESTINATION ${CMAKE_INSTALL_PREFIX})
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/view DESTINATION ${CMAKE_INSTALL_PREFIX})
