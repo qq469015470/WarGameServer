@@ -90,6 +90,7 @@
   make install 后会在Linux /opt文件夹生成 WebServer, GameServer, GameCallServer, GameServer, RoomServer,  这些文件皆为多个服务器的执行文件夹。<br>
   还会将服务器启动脚本生成于 /etc/init.d/ 下。<br>
   所以调用服务命令即可
+  游戏页面地址为9500端口
   ```
   sudo service webserver start
   sudo service userserver start
