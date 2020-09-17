@@ -40,7 +40,7 @@
   mkdir build
   cd build
   cmake ..
-  make && make install
+  make && sudo make install
   ```
   
   ## 配置nginx
